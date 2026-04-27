@@ -1,0 +1,5 @@
+{
+  "name": "Duffel Travel Explorer",
+  "description": "A premium flight search and booking application powered by the Duffel API and PostgreSQL.",
+  "requestFramePermissions": []
+}
