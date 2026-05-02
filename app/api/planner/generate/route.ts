@@ -506,6 +506,12 @@ export async function POST(request: Request) {
     // STEP 7: Calculate budget breakdown
     // ────────────────────────────────────────────────────────
     const effectiveBudget = budgetMode === 'total' ? totalBudget : (flightBudget + hotelBudget + transportBudget + dailyExpenseBudget);
+    // Calculate trip nights from dates
+    let tripNights = 3; // fallback
+    if (departureDate && returnDate) {
+      const d = Math.ceil((new Date(returnDate).getTime() - new Date(departureDate).getTime()) / 86400000);
+      if (d > 0) tripNights = d;
+    }
     let budgetBreakdown;
     if (budgetMode === 'total') {
       budgetBreakdown = {
@@ -513,6 +519,8 @@ export async function POST(request: Request) {
         hotels: Math.round(totalBudget * 0.30),
         transport: Math.round(totalBudget * 0.10),
         dailyExpenses: Math.round(totalBudget * 0.15),
+        nights: tripNights,
+        totalBudget: totalBudget,
       };
     } else {
       budgetBreakdown = {
@@ -520,6 +528,8 @@ export async function POST(request: Request) {
         hotels: hotelBudget,
         transport: transportBudget,
         dailyExpenses: dailyExpenseBudget,
+        nights: tripNights,
+        totalBudget: effectiveBudget,
       };
     }
 

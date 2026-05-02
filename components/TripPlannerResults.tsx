@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { PlaneTakeoff, Hotel, Bus, MapPin, Star, DollarSign, Sparkles, TrendingUp, ArrowUpRight, Award } from 'lucide-react';
+import { PlaneTakeoff, Hotel, Bus, MapPin, Star, DollarSign, Sparkles, TrendingUp, ArrowUpRight, Award, AlertTriangle } from 'lucide-react';
 import FlightCard from './FlightCard';
 import HotelCard from './HotelCard';
 import BusCard from './BusCard';
@@ -40,11 +40,33 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
     aiSummary,
   } = results;
 
-  const budgetChartData = budgetBreakdown ? [
-    { name: 'Flights', value: budgetBreakdown.flights || 0 },
-    { name: 'Hotels', value: budgetBreakdown.hotels || 0 },
-    { name: 'Transport', value: budgetBreakdown.transport || 0 },
-    { name: 'Daily Expenses', value: budgetBreakdown.dailyExpenses || 0 },
+  // ── Real-data budget calculation ──
+  const userTotalBudget = budgetBreakdown?.totalBudget || 0;
+  const nights = budgetBreakdown?.nights || 0;
+
+  // Flights: cheapest Duffel offer total_amount (string → number). Already includes all passengers.
+  const realFlightCost = flights.length > 0
+    ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || 0))
+    : 0;
+
+  // Hotels: cheapest nightly rate × number of nights
+  const cheapestHotelNightly = hotels.length > 0
+    ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : 0)))
+    : 0;
+  const realHotelCost = cheapestHotelNightly * nights;
+
+  // Remaining budget split 40% transport / 60% daily expenses
+  const remaining = Math.max(0, userTotalBudget - realFlightCost - realHotelCost);
+  const realTransportCost = Math.round(remaining * 0.40);
+  const realDailyExpenses = Math.round(remaining * 0.60);
+
+  const overBudget = userTotalBudget > 0 && (realFlightCost + realHotelCost) > userTotalBudget;
+
+  const budgetChartData = userTotalBudget > 0 ? [
+    { name: 'Flights', value: Math.round(realFlightCost) },
+    { name: 'Hotels', value: Math.round(realHotelCost) },
+    { name: 'Transport', value: realTransportCost },
+    { name: 'Daily Expenses', value: realDailyExpenses },
   ].filter(d => d.value > 0) : [];
 
   const totalBudgetUsed = budgetChartData.reduce((s, d) => s + d.value, 0);
@@ -122,6 +144,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
               ))}
             </div>
           </div>
+          {overBudget && (
+            <div className="flex items-center gap-3 py-4 px-6 rounded-2xl bg-amber-500/10 border border-amber-500/20">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+                ⚠️ Your selected options exceed your budget. The cheapest flight + hotel alone costs ${Math.round(realFlightCost + realHotelCost).toLocaleString()}, which is over your ${userTotalBudget.toLocaleString()} budget.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
