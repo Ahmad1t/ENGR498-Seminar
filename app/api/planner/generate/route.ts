@@ -209,7 +209,7 @@ export async function POST(request: Request) {
       origin, destination, tripType, departureDate, returnDate,
       adults, children, cabinClass, includeBaggage, baggageCount, directOnly,
       budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget,
-      hotelStars, hotelRooms, hotelBeds, hotelAmenities, nearAirport,
+      hotelStars, hotelRooms, hotelBeds, hotelAmenities, nearAirport, nights,
       includeTransport, transportTypes, transportPriority,
       vibes,
     } = body;
@@ -506,11 +506,10 @@ export async function POST(request: Request) {
     // STEP 7: Calculate budget breakdown
     // ────────────────────────────────────────────────────────
     const effectiveBudget = budgetMode === 'total' ? totalBudget : (flightBudget + hotelBudget + transportBudget + dailyExpenseBudget);
-    // Calculate trip nights from dates
-    let tripNights = 3; // fallback
-    if (departureDate && returnDate) {
-      const d = Math.ceil((new Date(returnDate).getTime() - new Date(departureDate).getTime()) / 86400000);
-      if (d > 0) tripNights = d;
+    // Use the user-provided nights from the wizard (no hardcoded fallback)
+    const tripNights = typeof nights === 'number' && nights > 0 ? nights : null;
+    if (tripNights === null) {
+      return NextResponse.json({ error: 'Missing or invalid nights value. Please select the number of nights in the Stay step.' }, { status: 400 });
     }
     let budgetBreakdown;
     if (budgetMode === 'total') {

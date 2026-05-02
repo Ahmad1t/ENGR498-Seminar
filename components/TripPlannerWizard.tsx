@@ -33,24 +33,26 @@ export interface PlannerData {
   baggageCount: number;
   directOnly: boolean;
   // Step 5
+  hotelStars: number;
+  hotelRooms: number;
+  hotelBeds: number;
+  hotelAmenities: string[];
+  nearAirport: boolean;
+  nights: number;
+  // Step 6 — Transport
+  includeTransport: boolean;
+  transportTypes: TransportType[];
+  transportPriority: TransportPriority;
+  // Step 7 — Vibe
+  vibes: string[];
+  // Step 8 — Budget
   budgetMode: BudgetMode;
   totalBudget: number;
   flightBudget: number;
   hotelBudget: number;
   transportBudget: number;
   dailyExpenseBudget: number;
-  // Step 6
-  hotelStars: number;
-  hotelRooms: number;
-  hotelBeds: number;
-  hotelAmenities: string[];
-  nearAirport: boolean;
-  // Step 7
-  includeTransport: boolean;
-  transportTypes: TransportType[];
-  transportPriority: TransportPriority;
-  // Step 8 — Vibe
-  vibes: string[];
+
 }
 
 interface TripPlannerWizardProps {
@@ -119,6 +121,7 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
     hotelBeds: 2,
     hotelAmenities: ['wifi', 'breakfast'],
     nearAirport: false,
+    nights: 1,
     includeTransport: true,
     transportTypes: ['bus'],
     transportPriority: 'cheapest',
@@ -152,6 +155,19 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
+  // Auto-compute nights from dates (user can still override manually)
+  const nightsAutoSet = useRef(false);
+  useEffect(() => {
+    if (data.tripType === 'round_trip' && data.departureDate && data.returnDate) {
+      const d = Math.ceil((new Date(data.returnDate).getTime() - new Date(data.departureDate).getTime()) / 86400000);
+      if (d > 0 && !nightsAutoSet.current) {
+        update({ nights: d });
+      }
+    } else if (data.tripType === 'one_way' && !nightsAutoSet.current) {
+      update({ nights: 1 });
+    }
+  }, [data.departureDate, data.returnDate, data.tripType]);
+
   // ── Smart Budget Suggestion ──
   const [cheapestFlightPrice, setCheapestFlightPrice] = useState<number | null>(null);
   const [isEstimate, setIsEstimate] = useState(false);
@@ -170,13 +186,8 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
   const HOTEL_NIGHTLY: Record<number, number> = { 1: 60, 2: 100, 3: 160, 4: 280, 5: 450 };
   const CABIN_FALLBACK: Record<string, number> = { economy: 300, premium_economy: 600, business: 1500, first: 3000 };
 
-  const nights = useMemo(() => {
-    if (data.departureDate && data.returnDate) {
-      const d = Math.ceil((new Date(data.returnDate).getTime() - new Date(data.departureDate).getTime()) / 86400000);
-      return d > 0 ? d : 3;
-    }
-    return 3;
-  }, [data.departureDate, data.returnDate]);
+  // Use the user-editable nights from wizard state (no hardcoded fallback)
+  const nights = data.nights;
 
   const totalTravelers = data.adults + data.children;
 
@@ -632,6 +643,19 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
             <Counter label="Rooms" sublabel="Number of hotel rooms" value={data.hotelRooms} min={1} onChange={v => update({ hotelRooms: v })} />
 
             <Counter label="Beds" sublabel="Number of beds per room" value={data.hotelBeds} min={1} onChange={v => update({ hotelBeds: v })} />
+
+            {/* Nights counter */}
+            <div className="space-y-2">
+              <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
+              <div className="px-6 space-y-1">
+                <div className="text-xs text-muted-foreground font-mono">
+                  {data.nights} night{data.nights !== 1 ? 's' : ''} × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights).toLocaleString()}
+                </div>
+                <div className="text-[10px] text-muted-foreground/50">
+                  Adjust if you won't need a hotel for the full duration.
+                </div>
+              </div>
+            </div>
 
             <div className="space-y-3">
               <label className="small-caps ml-1">Desired Amenities</label>

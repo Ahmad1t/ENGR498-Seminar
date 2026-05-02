@@ -134,7 +134,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
                 <div key={d.name} className="flex items-center justify-between py-4 px-6 rounded-2xl bg-muted border border-border">
                   <div className="flex items-center gap-4">
                     <div className="w-3 h-3 rounded-full" style={{ background: BUDGET_COLORS[i] }} />
-                    <span className="text-sm font-bold text-foreground">{d.name}</span>
+                    <div>
+                      <span className="text-sm font-bold text-foreground">{d.name}</span>
+                      {d.name === 'Hotels' && cheapestHotelNightly > 0 && nights > 0 && (
+                        <div className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">
+                          ${cheapestHotelNightly.toLocaleString()}/night × {nights} night{nights !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-bold text-foreground font-mono">${d.value.toLocaleString()}</div>
