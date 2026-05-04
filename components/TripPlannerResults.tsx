@@ -43,31 +43,40 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
   // ── Real-data budget calculation ──
   const userTotalBudget = budgetBreakdown?.totalBudget || 0;
   const nights = budgetBreakdown?.nights || 0;
+  const bIncludeFlight = budgetBreakdown?.includeFlight !== false;
+  const bIncludeHotel = budgetBreakdown?.includeHotel !== false;
+  const bIncludeTransport = budgetBreakdown?.includeTransport !== false;
 
   // Flights: cheapest Duffel offer total_amount (string → number). Already includes all passengers.
-  const realFlightCost = flights.length > 0
+  const realFlightCost = bIncludeFlight && flights.length > 0
     ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || 0))
     : 0;
 
   // Hotels: cheapest nightly rate × number of nights
-  const cheapestHotelNightly = hotels.length > 0
+  const cheapestHotelNightly = bIncludeHotel && hotels.length > 0
     ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : 0)))
     : 0;
   const realHotelCost = cheapestHotelNightly * nights;
 
   // Remaining budget split 40% transport / 60% daily expenses
   const remaining = Math.max(0, userTotalBudget - realFlightCost - realHotelCost);
-  const realTransportCost = Math.round(remaining * 0.40);
-  const realDailyExpenses = Math.round(remaining * 0.60);
+  const realTransportCost = bIncludeTransport ? Math.round(remaining * 0.40) : 0;
+  const realDailyExpenses = Math.round(remaining * (bIncludeTransport ? 0.60 : 1.0));
 
   const overBudget = userTotalBudget > 0 && (realFlightCost + realHotelCost) > userTotalBudget;
 
-  const budgetChartData = userTotalBudget > 0 ? [
-    { name: 'Flights', value: Math.round(realFlightCost) },
-    { name: 'Hotels', value: Math.round(realHotelCost) },
-    { name: 'Transport', value: realTransportCost },
-    { name: 'Daily Expenses', value: realDailyExpenses },
-  ].filter(d => d.value > 0) : [];
+  // Categories that are included AND have a positive value go into the donut chart
+  const allCategories = [
+    { name: 'Flights', value: Math.round(realFlightCost), included: bIncludeFlight },
+    { name: 'Hotels', value: Math.round(realHotelCost), included: bIncludeHotel },
+    { name: 'Transport', value: realTransportCost, included: bIncludeTransport },
+    { name: 'Daily Expenses', value: realDailyExpenses, included: true },
+  ];
+
+  // Donut chart only shows included categories with value > 0
+  const budgetChartData = userTotalBudget > 0
+    ? allCategories.filter(d => d.included && d.value > 0)
+    : [];
 
   const totalBudgetUsed = budgetChartData.reduce((s, d) => s + d.value, 0);
 
@@ -103,7 +112,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
       )}
 
       {/* Budget Breakdown */}
-      {budgetChartData.length > 0 && (
+      {userTotalBudget > 0 && (
         <div className="space-y-8">
           <div className="border-b border-border pb-8">
             <div className="flex items-center gap-3 text-muted-foreground mb-2">
@@ -115,6 +124,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+            {budgetChartData.length > 0 && (
             <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -129,14 +139,15 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
                 </PieChart>
               </ResponsiveContainer>
             </div>
+            )}
             <div className="space-y-4">
-              {budgetChartData.map((d, i) => (
+              {allCategories.map((d, i) => (
                 <div key={d.name} className="flex items-center justify-between py-4 px-6 rounded-2xl bg-muted border border-border">
                   <div className="flex items-center gap-4">
-                    <div className="w-3 h-3 rounded-full" style={{ background: BUDGET_COLORS[i] }} />
+                    <div className="w-3 h-3 rounded-full" style={{ background: d.included ? BUDGET_COLORS[budgetChartData.findIndex(c => c.name === d.name) % BUDGET_COLORS.length] || '#d4d4d4' : '#d4d4d4' }} />
                     <div>
                       <span className="text-sm font-bold text-foreground">{d.name}</span>
-                      {d.name === 'Hotels' && cheapestHotelNightly > 0 && nights > 0 && (
+                      {d.included && d.name === 'Hotels' && cheapestHotelNightly > 0 && nights > 0 && (
                         <div className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">
                           ${cheapestHotelNightly.toLocaleString()}/night × {nights} night{nights !== 1 ? 's' : ''}
                         </div>
@@ -144,8 +155,14 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-bold text-foreground font-mono">${d.value.toLocaleString()}</div>
-                    <div className="text-[9px] text-muted-foreground/40 uppercase tracking-wider">{totalBudgetUsed > 0 ? Math.round((d.value / totalBudgetUsed) * 100) : 0}%</div>
+                    {d.included ? (
+                      <>
+                        <div className="text-sm font-bold text-foreground font-mono">${d.value.toLocaleString()}</div>
+                        <div className="text-[9px] text-muted-foreground/40 uppercase tracking-wider">{totalBudgetUsed > 0 ? Math.round((d.value / totalBudgetUsed) * 100) : 0}%</div>
+                      </>
+                    ) : (
+                      <div className="text-sm text-muted-foreground/50 italic">Not included</div>
+                    )}
                   </div>
                 </div>
               ))}

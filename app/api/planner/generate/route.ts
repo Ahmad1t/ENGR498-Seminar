@@ -210,7 +210,7 @@ export async function POST(request: Request) {
       adults, children, cabinClass, includeBaggage, baggageCount, directOnly,
       budgetMode, totalBudget, flightBudget, hotelBudget, transportBudget, dailyExpenseBudget,
       hotelStars, hotelRooms, hotelBeds, hotelAmenities, nearAirport, nights,
-      includeTransport, transportTypes, transportPriority,
+      includeFlight = true, includeHotel = true, includeTransport, transportTypes, transportPriority,
       vibes,
     } = body;
 
@@ -266,6 +266,8 @@ export async function POST(request: Request) {
     // ────────────────────────────────────────────────────────
     // STEP 3: Search flights via Duffel
     // ────────────────────────────────────────────────────────
+    let flights: any[] = [];
+    if (includeFlight) {
     const slices: any[] = [{ origin, destination, departure_date: departureDate }];
     if (tripType === 'round_trip' && returnDate) {
       slices.push({ origin: destination, destination: origin, departure_date: returnDate });
@@ -276,7 +278,6 @@ export async function POST(request: Request) {
       ...Array(children).fill(null).map(() => ({ type: 'child' as const })),
     ];
 
-    let flights: any[] = [];
     try {
       const offerRequest = await duffel.offerRequests.create({
         slices: slices as any,
@@ -325,6 +326,9 @@ export async function POST(request: Request) {
     } catch (flightErr: any) {
       console.error('Flight search error:', flightErr.message);
     }
+    } else {
+      console.log('✈️ Flights SKIPPED — user toggled off includeFlight');
+    }
 
     // ═══════════ STEP 3: FLIGHT SEARCH ═══════════
     console.log('═══════════ STEP 3: FLIGHT SEARCH ═══════════');
@@ -343,6 +347,7 @@ export async function POST(request: Request) {
     //         Anchored to CITY CENTER coordinates
     // ────────────────────────────────────────────────────────
     let hotels: any[] = [];
+    if (includeHotel) {
     if (geoLat && geoLon) {
       // Search within 20km of city center for hotels
       const nearbyHotels = await findNearby(geoLat, geoLon, 'hotel', 20000, 20);
@@ -419,6 +424,9 @@ export async function POST(request: Request) {
         { id: 'h2', type: 'hotel', name: `${destinationCity} Metropolitan Suites`, price: 280, rating: 4, description: `Modern downtown hotel in ${destinationCity} with panoramic views. Features high-speed WiFi, in-room coffee, and fitness center.`, location: `Downtown ${destinationCity}`, amenities: ['wifi', 'coffee', 'gym', 'breakfast'], verified: false },
         { id: 'h3', type: 'hotel', name: `${destinationCity} Boutique Hotel`, price: 190, rating: 3, description: `Charming boutique hotel in ${destinationCity}: free WiFi, in-room coffee, and complimentary breakfast.`, location: `${destinationCity} Historic District`, amenities: ['wifi', 'coffee', 'breakfast'], verified: false },
       ].filter(h => h.rating >= hotelStars);
+    }
+    } else {
+      console.log('🏨 Hotels SKIPPED — user toggled off includeHotel');
     }
 
     // ═══════════ STEP 4: HOTEL SEARCH ═══════════
@@ -514,21 +522,27 @@ export async function POST(request: Request) {
     let budgetBreakdown;
     if (budgetMode === 'total') {
       budgetBreakdown = {
-        flights: Math.round(totalBudget * 0.45),
-        hotels: Math.round(totalBudget * 0.30),
-        transport: Math.round(totalBudget * 0.10),
+        flights: includeFlight ? Math.round(totalBudget * 0.45) : 0,
+        hotels: includeHotel ? Math.round(totalBudget * 0.30) : 0,
+        transport: includeTransport ? Math.round(totalBudget * 0.10) : 0,
         dailyExpenses: Math.round(totalBudget * 0.15),
         nights: tripNights,
         totalBudget: totalBudget,
+        includeFlight: !!includeFlight,
+        includeHotel: !!includeHotel,
+        includeTransport: !!includeTransport,
       };
     } else {
       budgetBreakdown = {
-        flights: flightBudget,
-        hotels: hotelBudget,
-        transport: transportBudget,
+        flights: includeFlight ? flightBudget : 0,
+        hotels: includeHotel ? hotelBudget : 0,
+        transport: includeTransport ? transportBudget : 0,
         dailyExpenses: dailyExpenseBudget,
         nights: tripNights,
         totalBudget: effectiveBudget,
+        includeFlight: !!includeFlight,
+        includeHotel: !!includeHotel,
+        includeTransport: !!includeTransport,
       };
     }
 

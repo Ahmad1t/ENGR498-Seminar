@@ -28,11 +28,13 @@ export interface PlannerData {
   adults: number;
   children: number;
   // Step 4
+  includeFlight: boolean;
   cabinClass: CabinClass;
   includeBaggage: boolean;
   baggageCount: number;
   directOnly: boolean;
   // Step 5
+  includeHotel: boolean;
   hotelStars: number;
   hotelRooms: number;
   hotelBeds: number;
@@ -106,6 +108,7 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
     returnDate: '',
     adults: 1,
     children: 0,
+    includeFlight: true,
     cabinClass: 'economy',
     includeBaggage: true,
     baggageCount: 1,
@@ -116,6 +119,7 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
     hotelBudget: 800,
     transportBudget: 200,
     dailyExpenseBudget: 500,
+    includeHotel: true,
     hotelStars: 4,
     hotelRooms: 1,
     hotelBeds: 2,
@@ -411,58 +415,83 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
       case 3:
         return (
           <div className="space-y-8">
-            <div className="space-y-3">
-              <label className="small-caps ml-1">Cabin Class</label>
-              <div className="grid grid-cols-2 gap-3">
-                {([
-                  { value: 'economy', label: 'Economy' },
-                  { value: 'premium_economy', label: 'Premium Economy' },
-                  { value: 'business', label: 'Business' },
-                  { value: 'first', label: 'First Class' },
-                ] as { value: CabinClass; label: string }[]).map(c => (
-                  <button key={c.value} type="button" onClick={() => update({ cabinClass: c.value })}
-                    className={`py-4 rounded-2xl border text-xs uppercase tracking-[0.12em] font-bold transition-all ${data.cabinClass === c.value ? 'bg-foreground text-background border-foreground shadow-lg' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
-              <div className="flex items-center gap-3">
-                <Briefcase className="w-5 h-5 text-muted-foreground" />
-                <div>
-                  <div className="text-base font-bold text-foreground">Checked Baggage</div>
-                  <div className="text-xs text-muted-foreground">Include checked bags?</div>
-                </div>
-              </div>
-              <button type="button" onClick={() => update({ includeBaggage: !data.includeBaggage })}
-                className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.includeBaggage ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
-                <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.includeBaggage ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
-                  {data.includeBaggage && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
-                </div>
-              </button>
-            </div>
-
-            {data.includeBaggage && (
-              <Counter label="Number of Bags" sublabel="Per adult traveler" value={data.baggageCount} min={1} onChange={v => update({ baggageCount: v })} />
-            )}
-
+            {/* Include Flight toggle */}
             <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
               <div className="flex items-center gap-3">
                 <Plane className="w-5 h-5 text-muted-foreground" />
                 <div>
-                  <div className="text-base font-bold text-foreground">Direct Flights Only</div>
-                  <div className="text-xs text-muted-foreground">No layovers or connections</div>
+                  <div className="text-base font-bold text-foreground">Include Flights</div>
+                  <div className="text-xs text-muted-foreground">Search for flights to your destination</div>
                 </div>
               </div>
-              <button type="button" onClick={() => update({ directOnly: !data.directOnly })}
-                className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.directOnly ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
-                <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.directOnly ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
-                  {data.directOnly && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+              <button type="button" onClick={() => update({ includeFlight: !data.includeFlight })}
+                className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.includeFlight ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
+                <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.includeFlight ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                  {data.includeFlight && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
                 </div>
               </button>
             </div>
+
+            {data.includeFlight ? (
+              <>
+                <div className="space-y-3">
+                  <label className="small-caps ml-1">Cabin Class</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([
+                      { value: 'economy', label: 'Economy' },
+                      { value: 'premium_economy', label: 'Premium Economy' },
+                      { value: 'business', label: 'Business' },
+                      { value: 'first', label: 'First Class' },
+                    ] as { value: CabinClass; label: string }[]).map(c => (
+                      <button key={c.value} type="button" onClick={() => update({ cabinClass: c.value })}
+                        className={`py-4 rounded-2xl border text-xs uppercase tracking-[0.12em] font-bold transition-all ${data.cabinClass === c.value ? 'bg-foreground text-background border-foreground shadow-lg' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
+                  <div className="flex items-center gap-3">
+                    <Briefcase className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <div className="text-base font-bold text-foreground">Checked Baggage</div>
+                      <div className="text-xs text-muted-foreground">Include checked bags?</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => update({ includeBaggage: !data.includeBaggage })}
+                    className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.includeBaggage ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
+                    <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.includeBaggage ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                      {data.includeBaggage && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+                    </div>
+                  </button>
+                </div>
+
+                {data.includeBaggage && (
+                  <Counter label="Number of Bags" sublabel="Per adult traveler" value={data.baggageCount} min={1} onChange={v => update({ baggageCount: v })} />
+                )}
+
+                <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
+                  <div className="flex items-center gap-3">
+                    <Plane className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <div className="text-base font-bold text-foreground">Direct Flights Only</div>
+                      <div className="text-xs text-muted-foreground">No layovers or connections</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => update({ directOnly: !data.directOnly })}
+                    className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.directOnly ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
+                    <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.directOnly ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                      {data.directOnly && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+                    </div>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="py-8 px-6 rounded-3xl border border-dashed border-border text-center">
+                <p className="text-sm text-muted-foreground/60">Flight not included in this trip</p>
+              </div>
+            )}
           </div>
         );
 
@@ -628,72 +657,97 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
       case 4:
         return (
           <div className="space-y-8">
-            <div className="space-y-3">
-              <label className="small-caps ml-1">Minimum Star Rating</label>
-              <div className="flex gap-2 py-4 px-6 rounded-3xl bg-muted border border-border">
-                {[1, 2, 3, 4, 5].map(s => (
-                  <button key={s} type="button" onClick={() => update({ hotelStars: s })}
-                    className="flex-1 flex justify-center transition-transform hover:scale-110">
-                    <Star className={`w-8 h-8 transition-colors ${s <= data.hotelStars ? 'fill-amber-400 text-amber-400' : 'text-border'}`} />
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Counter label="Rooms" sublabel="Number of hotel rooms" value={data.hotelRooms} min={1} onChange={v => update({ hotelRooms: v })} />
-
-            <Counter label="Beds" sublabel="Number of beds per room" value={data.hotelBeds} min={1} onChange={v => update({ hotelBeds: v })} />
-
-            {/* Nights counter */}
-            <div className="space-y-2">
-              <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
-              <div className="px-6 space-y-1">
-                <div className="text-xs text-muted-foreground font-mono">
-                  {data.nights} night{data.nights !== 1 ? 's' : ''} × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights).toLocaleString()}
-                </div>
-                <div className="text-[10px] text-muted-foreground/50">
-                  Adjust if you won't need a hotel for the full duration.
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="small-caps ml-1">Desired Amenities</label>
-              <div className="grid grid-cols-2 gap-3">
-                {AMENITIES.map(a => {
-                  const selected = data.hotelAmenities.includes(a.id);
-                  return (
-                    <button key={a.id} type="button"
-                      onClick={() => update({
-                        hotelAmenities: selected
-                          ? data.hotelAmenities.filter(x => x !== a.id)
-                          : [...data.hotelAmenities, a.id]
-                      })}
-                      className={`flex items-center gap-3 py-3.5 px-5 rounded-2xl border text-left transition-all duration-200 ${selected ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
-                      <a.icon className="w-4 h-4 shrink-0" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">{a.label}</span>
-                      {selected && <Check className="w-3.5 h-3.5 ml-auto shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
+            {/* Include Hotel toggle */}
             <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
               <div className="flex items-center gap-3">
-                <MapPin className="w-5 h-5 text-muted-foreground" />
+                <Hotel className="w-5 h-5 text-muted-foreground" />
                 <div>
-                  <div className="text-base font-bold text-foreground">Near Airport</div>
-                  <div className="text-xs text-muted-foreground">Hotel close to arrival location</div>
+                  <div className="text-base font-bold text-foreground">Include Hotel</div>
+                  <div className="text-xs text-muted-foreground">Search for accommodation at your destination</div>
                 </div>
               </div>
-              <button type="button" onClick={() => update({ nearAirport: !data.nearAirport })}
-                className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.nearAirport ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
-                <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.nearAirport ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
-                  {data.nearAirport && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+              <button type="button" onClick={() => update({ includeHotel: !data.includeHotel })}
+                className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.includeHotel ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
+                <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.includeHotel ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                  {data.includeHotel && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
                 </div>
               </button>
             </div>
+
+            {data.includeHotel ? (
+              <>
+                <div className="space-y-3">
+                  <label className="small-caps ml-1">Minimum Star Rating</label>
+                  <div className="flex gap-2 py-4 px-6 rounded-3xl bg-muted border border-border">
+                    {[1, 2, 3, 4, 5].map(s => (
+                      <button key={s} type="button" onClick={() => update({ hotelStars: s })}
+                        className="flex-1 flex justify-center transition-transform hover:scale-110">
+                        <Star className={`w-8 h-8 transition-colors ${s <= data.hotelStars ? 'fill-amber-400 text-amber-400' : 'text-border'}`} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <Counter label="Rooms" sublabel="Number of hotel rooms" value={data.hotelRooms} min={1} onChange={v => update({ hotelRooms: v })} />
+
+                <Counter label="Beds" sublabel="Number of beds per room" value={data.hotelBeds} min={1} onChange={v => update({ hotelBeds: v })} />
+
+                {/* Nights counter */}
+                <div className="space-y-2">
+                  <Counter label="Nights" sublabel="How many nights to stay" value={data.nights} min={1} onChange={v => { nightsAutoSet.current = true; update({ nights: Math.min(30, v) }); }} />
+                  <div className="px-6 space-y-1">
+                    <div className="text-xs text-muted-foreground font-mono">
+                      {data.nights} night{data.nights !== 1 ? 's' : ''} × ${(HOTEL_NIGHTLY[data.hotelStars] || 160).toLocaleString()}/night = ${((HOTEL_NIGHTLY[data.hotelStars] || 160) * data.nights).toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/50">
+                      Adjust if you won't need a hotel for the full duration.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="small-caps ml-1">Desired Amenities</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {AMENITIES.map(a => {
+                      const selected = data.hotelAmenities.includes(a.id);
+                      return (
+                        <button key={a.id} type="button"
+                          onClick={() => update({
+                            hotelAmenities: selected
+                              ? data.hotelAmenities.filter(x => x !== a.id)
+                              : [...data.hotelAmenities, a.id]
+                          })}
+                          className={`flex items-center gap-3 py-3.5 px-5 rounded-2xl border text-left transition-all duration-200 ${selected ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-background border-border text-muted-foreground hover:border-foreground/30'}`}>
+                          <a.icon className="w-4 h-4 shrink-0" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider">{a.label}</span>
+                          {selected && <Check className="w-3.5 h-3.5 ml-auto shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between py-5 px-6 rounded-3xl bg-muted border border-border">
+                  <div className="flex items-center gap-3">
+                    <MapPin className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <div className="text-base font-bold text-foreground">Near Airport</div>
+                      <div className="text-xs text-muted-foreground">Hotel close to arrival location</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => update({ nearAirport: !data.nearAirport })}
+                    className={`w-16 h-9 rounded-full transition-all duration-300 relative shadow-inner ${data.nearAirport ? 'bg-emerald-500' : 'bg-muted-foreground/20'}`}>
+                    <div className={`w-7 h-7 rounded-full shadow-lg absolute top-1 transition-all duration-300 flex items-center justify-center ${data.nearAirport ? 'left-8 bg-white' : 'left-1 bg-white'}`}>
+                      {data.nearAirport && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />}
+                    </div>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="py-8 px-6 rounded-3xl border border-dashed border-border text-center">
+                <p className="text-sm text-muted-foreground/60">Hotel not included in this trip</p>
+              </div>
+            )}
           </div>
         );
 
@@ -717,7 +771,7 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
               </button>
             </div>
 
-            {data.includeTransport && (
+            {data.includeTransport ? (
               <>
                 <div className="space-y-3">
                   <label className="small-caps ml-1">Transport Type <span className="normal-case text-[9px] text-muted-foreground/50 ml-1">(select multiple)</span></label>
@@ -759,6 +813,10 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
                   </div>
                 </div>
               </>
+            ) : (
+              <div className="py-8 px-6 rounded-3xl border border-dashed border-border text-center">
+                <p className="text-sm text-muted-foreground/60">Transport not included in this trip</p>
+              </div>
             )}
           </div>
         );
@@ -807,9 +865,9 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
                 { label: 'Route', value: `${data.origin} → ${data.destination}`, sub: data.tripType.replace('_', ' ') },
                 { label: 'Dates', value: data.departureDate, sub: data.returnDate ? `Return: ${data.returnDate}` : 'One way' },
                 { label: 'Travelers', value: `${data.adults} Adult${data.adults > 1 ? 's' : ''}`, sub: data.children > 0 ? `${data.children} Child${data.children > 1 ? 'ren' : ''}` : 'No children' },
-                { label: 'Cabin', value: data.cabinClass.replace('_', ' '), sub: data.includeBaggage ? `${data.baggageCount} bag${data.baggageCount > 1 ? 's' : ''}` : 'No baggage' },
+                { label: 'Flight', value: data.includeFlight ? data.cabinClass.replace('_', ' ') : 'Not included', sub: data.includeFlight ? (data.includeBaggage ? `${data.baggageCount} bag${data.baggageCount > 1 ? 's' : ''}` : 'No baggage') : '—' },
                 { label: 'Budget', value: data.budgetMode === 'total' ? `$${data.totalBudget.toLocaleString()}` : `$${(data.flightBudget + data.hotelBudget + data.transportBudget + data.dailyExpenseBudget).toLocaleString()}`, sub: data.budgetMode === 'total' ? 'AI-allocated' : 'Per category' },
-                { label: 'Hotel', value: `${data.hotelStars}-Star`, sub: `${data.hotelRooms} room${data.hotelRooms > 1 ? 's' : ''} • ${data.hotelBeds} bed${data.hotelBeds > 1 ? 's' : ''} • ${data.hotelAmenities.length} amenities` },
+                { label: 'Hotel', value: data.includeHotel ? `${data.hotelStars}-Star` : 'Not included', sub: data.includeHotel ? `${data.hotelRooms} room${data.hotelRooms > 1 ? 's' : ''} • ${data.hotelBeds} bed${data.hotelBeds > 1 ? 's' : ''} • ${data.hotelAmenities.length} amenities` : '—' },
                 { label: 'Transport', value: data.includeTransport ? data.transportTypes.map(t => t.replace('_', ' ')).join(', ') : 'Not included', sub: data.includeTransport ? data.transportPriority : '—' },
                 { label: 'Vibe', value: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.emoji || '').join(' ') : 'General mix', sub: data.vibes.length > 0 ? data.vibes.map(v => VIBE_OPTIONS.find(vo => vo.id === v)?.label || '').join(', ') : 'All attractions' },
               ].map((item, i) => (
