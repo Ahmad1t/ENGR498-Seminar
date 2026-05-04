@@ -519,13 +519,28 @@ export async function POST(request: Request) {
     if (tripNights === null) {
       return NextResponse.json({ error: 'Missing or invalid nights value. Please select the number of nights in the Stay step.' }, { status: 400 });
     }
+    // ── Fixed percentage ceilings (never redistributed) ──
+    // Flights: 45%, Hotels: 30%, Transport: 10%, Daily Expenses: 15%
+    const flightCeiling  = Math.round(effectiveBudget * 0.45);
+    const hotelCeiling   = Math.round(effectiveBudget * 0.30);
+    const transportFixed = Math.round(effectiveBudget * 0.10);
+    const dailyFixed     = Math.round(effectiveBudget * 0.15);
+
+    // Real API prices (available at this point in the handler)
+    const cheapestFlightPrice = flights.length > 0
+      ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || Infinity))
+      : 0;
+    const cheapestHotelTotal = hotels.length > 0
+      ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : Infinity))) * tripNights
+      : 0;
+
     let budgetBreakdown;
     if (budgetMode === 'total') {
       budgetBreakdown = {
-        flights: includeFlight ? Math.round(totalBudget * 0.45) : 0,
-        hotels: includeHotel ? Math.round(totalBudget * 0.30) : 0,
-        transport: includeTransport ? Math.round(totalBudget * 0.10) : 0,
-        dailyExpenses: Math.round(totalBudget * 0.15),
+        flights: includeFlight ? Math.round(Math.min(cheapestFlightPrice || flightCeiling, flightCeiling)) : 0,
+        hotels:  includeHotel  ? Math.round(Math.min(cheapestHotelTotal  || hotelCeiling,  hotelCeiling))  : 0,
+        transport: includeTransport ? transportFixed : 0,
+        dailyExpenses: dailyFixed,
         nights: tripNights,
         totalBudget: totalBudget,
         includeFlight: !!includeFlight,
@@ -533,6 +548,7 @@ export async function POST(request: Request) {
         includeTransport: !!includeTransport,
       };
     } else {
+      // Per-category mode: user set explicit amounts, just zero excluded ones
       budgetBreakdown = {
         flights: includeFlight ? flightBudget : 0,
         hotels: includeHotel ? hotelBudget : 0,
