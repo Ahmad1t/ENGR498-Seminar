@@ -106,7 +106,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
               <span className="small-caps tracking-widest">Budget Allocation</span>
             </div>
             <h2 className="text-5xl title-text text-foreground">Smart Breakdown</h2>
-            <p className="text-muted-foreground text-sm font-light mt-2">How the AI allocated your ${totalBudgetUsed.toLocaleString()} budget</p>
+            <p className="text-muted-foreground text-sm font-light mt-2">How the AI allocated your ${budgetBreakdown.totalBudget?.toLocaleString()} budget</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
