@@ -40,37 +40,23 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
     aiSummary,
   } = results;
 
-  // ── Real-data budget calculation ──
+  // ── Budget values from backend (single source of truth) ──
   const userTotalBudget = budgetBreakdown?.totalBudget || 0;
-  const nights = budgetBreakdown?.nights || 0;
   const bIncludeFlight = budgetBreakdown?.includeFlight !== false;
   const bIncludeHotel = budgetBreakdown?.includeHotel !== false;
   const bIncludeTransport = budgetBreakdown?.includeTransport !== false;
 
-  // Flights: cheapest Duffel offer total_amount (string → number). Already includes all passengers.
-  const realFlightCost = bIncludeFlight && flights.length > 0
-    ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || 0))
-    : 0;
-
-  // Hotels: cheapest nightly rate × number of nights
-  const cheapestHotelNightly = bIncludeHotel && hotels.length > 0
-    ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : 0)))
-    : 0;
-  const realHotelCost = cheapestHotelNightly * nights;
-
-  // Remaining budget split 40% transport / 60% daily expenses
-  const remaining = Math.max(0, userTotalBudget - realFlightCost - realHotelCost);
-  const realTransportCost = bIncludeTransport ? Math.round(remaining * 0.40) : 0;
-  const realDailyExpenses = Math.round(remaining * (bIncludeTransport ? 0.60 : 1.0));
-
-  const overBudget = userTotalBudget > 0 && (realFlightCost + realHotelCost) > userTotalBudget;
+  const bFlights = budgetBreakdown?.flights || 0;
+  const bHotels = budgetBreakdown?.hotels || 0;
+  const bTransport = budgetBreakdown?.transport || 0;
+  const bDaily = budgetBreakdown?.dailyExpenses || 0;
 
   // Categories that are included AND have a positive value go into the donut chart
   const allCategories = [
-    { name: 'Flights', value: Math.round(realFlightCost), included: bIncludeFlight },
-    { name: 'Hotels', value: Math.round(realHotelCost), included: bIncludeHotel },
-    { name: 'Transport', value: realTransportCost, included: bIncludeTransport },
-    { name: 'Daily Expenses', value: realDailyExpenses, included: true },
+    { name: 'Flights', value: bFlights, included: bIncludeFlight },
+    { name: 'Hotels', value: bHotels, included: bIncludeHotel },
+    { name: 'Transport', value: bTransport, included: bIncludeTransport },
+    { name: 'Daily Expenses', value: bDaily, included: true },
   ];
 
   // Donut chart only shows included categories with value > 0
@@ -147,9 +133,9 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
                     <div className="w-3 h-3 rounded-full" style={{ background: d.included ? BUDGET_COLORS[budgetChartData.findIndex(c => c.name === d.name) % BUDGET_COLORS.length] || '#d4d4d4' : '#d4d4d4' }} />
                     <div>
                       <span className="text-sm font-bold text-foreground">{d.name}</span>
-                      {d.included && d.name === 'Hotels' && cheapestHotelNightly > 0 && nights > 0 && (
+                      {d.included && d.name === 'Hotels' && bHotels > 0 && (budgetBreakdown?.nights || 0) > 0 && (
                         <div className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">
-                          ${cheapestHotelNightly.toLocaleString()}/night × {nights} night{nights !== 1 ? 's' : ''}
+                          ${Math.round(bHotels / (budgetBreakdown?.nights || 1)).toLocaleString()}/night × {budgetBreakdown.nights} night{budgetBreakdown.nights !== 1 ? 's' : ''}
                         </div>
                       )}
                     </div>
@@ -168,11 +154,11 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
               ))}
             </div>
           </div>
-          {overBudget && (
+          {userTotalBudget > 0 && (bFlights + bHotels) > userTotalBudget && (
             <div className="flex items-center gap-3 py-4 px-6 rounded-2xl bg-amber-500/10 border border-amber-500/20">
               <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
               <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
-                ⚠️ Your selected options exceed your budget. The cheapest flight + hotel alone costs ${Math.round(realFlightCost + realHotelCost).toLocaleString()}, which is over your ${userTotalBudget.toLocaleString()} budget.
+                ⚠️ Your selected options exceed your budget. The cheapest flight + hotel alone costs ${(bFlights + bHotels).toLocaleString()}, which is over your ${userTotalBudget.toLocaleString()} budget.
               </p>
             </div>
           )}
