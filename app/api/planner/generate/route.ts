@@ -696,46 +696,123 @@ Please provide a JSON response with:
         },
       };
 
-      // ── Gemini API key rotation: primary → secondary on 429 only ──
-      const is429Error = (err: any): boolean => {
-        const msg = (err?.message || '').toLowerCase();
-        const status = err?.status || err?.statusCode || err?.httpStatusCode;
-        return status === 429 || msg.includes('429') || msg.includes('quota') || msg.includes('resource_exhausted') || msg.includes('rate limit');
-      };
+      // ── 3-layer AI fallback: Gemini primary → Gemini secondary → Groq ──
+      const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
       let response: any;
+      let aiResult: any = {};
       let usedKeyLabel = 'primary';
       const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
       const secondaryKey = process.env.GEMINI_API_KEY_2;
+      const groqKey = process.env.GROQ_API_KEY;
 
+      // Layer 1: Gemini primary key
       try {
         const aiPrimary = new GoogleGenAI({ apiKey: primaryKey });
         response = await aiPrimary.models.generateContent(geminiRequestConfig);
+        aiResult = typeof response.text === 'string' ? JSON.parse(response.text || '{}') : {};
         console.log('🔑 Gemini call succeeded with PRIMARY key');
       } catch (primaryErr: any) {
-        if (is429Error(primaryErr) && secondaryKey) {
-          console.warn('⚠️ Gemini PRIMARY key hit 429 quota limit — rotating to SECONDARY key');
+        console.error('❌ Gemini PRIMARY key failed:', primaryErr.message);
+
+        // Layer 2: Gemini secondary key
+        if (secondaryKey) {
+          console.log('⏳ Waiting 2s before retrying with Gemini secondary key...');
+          await delay(2000);
           try {
             const aiSecondary = new GoogleGenAI({ apiKey: secondaryKey });
             response = await aiSecondary.models.generateContent(geminiRequestConfig);
+            aiResult = typeof response.text === 'string' ? JSON.parse(response.text || '{}') : {};
             usedKeyLabel = 'secondary';
             console.log('🔑 Gemini call succeeded with SECONDARY key');
           } catch (secondaryErr: any) {
-            if (is429Error(secondaryErr)) {
-              console.error('❌ Both Gemini keys exhausted (429) — falling back to hardcoded response');
+            console.error('❌ Gemini SECONDARY key also failed:', secondaryErr.message);
+
+            // Layer 3: Groq fallback
+            if (groqKey) {
+              console.log('⏳ Waiting 2s before trying Groq...');
+              await delay(2000);
+              console.log('🟠 Trying Groq fallback...');
+              try {
+                const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${groqKey}`,
+                  },
+                  body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: [
+                      { role: 'system', content: 'You are an elite AI travel concierge. Respond ONLY with valid JSON matching the requested schema. No markdown, no code fences, just raw JSON.' },
+                      { role: 'user', content: prompt },
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 4096,
+                    response_format: { type: 'json_object' },
+                  }),
+                });
+
+                if (!groqResponse.ok) {
+                  throw new Error(`Groq HTTP ${groqResponse.status}: ${await groqResponse.text()}`);
+                }
+
+                const groqData = await groqResponse.json();
+                const groqContent = groqData.choices?.[0]?.message?.content || '{}';
+                aiResult = JSON.parse(groqContent);
+                usedKeyLabel = 'groq';
+                console.log('✅ Groq call succeeded');
+              } catch (groqErr: any) {
+                console.error('❌ Groq also failed:', groqErr.message);
+                throw groqErr; // let the outer catch handle hardcoded fallback
+              }
             } else {
-              console.error('❌ Gemini SECONDARY key failed with non-429 error:', secondaryErr.message);
+              console.error('❌ No GROQ_API_KEY configured — falling back to hardcoded response');
+              throw secondaryErr;
             }
-            throw secondaryErr; // let the outer catch handle fallback
           }
         } else {
-          // Non-429 error on primary key — do NOT try secondary, fall back immediately
-          console.error('❌ Gemini PRIMARY key failed with non-429 error:', primaryErr.message);
-          throw primaryErr;
+          // No secondary key — try Groq directly
+          if (groqKey) {
+            console.log('⏳ Waiting 2s before trying Groq...');
+            await delay(2000);
+            console.log('🟠 Trying Groq fallback...');
+            try {
+              const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${groqKey}`,
+                },
+                body: JSON.stringify({
+                  model: 'llama-3.3-70b-versatile',
+                  messages: [
+                    { role: 'system', content: 'You are an elite AI travel concierge. Respond ONLY with valid JSON matching the requested schema. No markdown, no code fences, just raw JSON.' },
+                    { role: 'user', content: prompt },
+                  ],
+                  temperature: 0.7,
+                  max_tokens: 4096,
+                  response_format: { type: 'json_object' },
+                }),
+              });
+
+              if (!groqResponse.ok) {
+                throw new Error(`Groq HTTP ${groqResponse.status}: ${await groqResponse.text()}`);
+              }
+
+              const groqData = await groqResponse.json();
+              const groqContent = groqData.choices?.[0]?.message?.content || '{}';
+              aiResult = JSON.parse(groqContent);
+              usedKeyLabel = 'groq';
+              console.log('✅ Groq call succeeded');
+            } catch (groqErr: any) {
+              console.error('❌ Groq also failed:', groqErr.message);
+              throw groqErr;
+            }
+          } else {
+            throw primaryErr;
+          }
         }
       }
-
-      const aiResult = typeof response.text === 'string' ? JSON.parse(response.text || '{}') : {};
 
       // ═══════════ STEP 7: GEMINI RAW RESPONSE ═══════════
       console.log('\n═══════════ STEP 7: GEMINI RAW RESPONSE ═══════════');
