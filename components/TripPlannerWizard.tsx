@@ -60,6 +60,8 @@ export interface PlannerData {
 interface TripPlannerWizardProps {
   onComplete: (data: PlannerData) => void;
   isLoading: boolean;
+  initialStep?: number;
+  initialData?: Partial<PlannerData>;
 }
 
 const AMENITIES = [
@@ -96,8 +98,8 @@ const STEPS = [
   { title: 'Review', subtitle: 'Confirm your trip details' },
 ];
 
-export default function TripPlannerWizard({ onComplete, isLoading }: TripPlannerWizardProps) {
-  const [step, setStep] = useState(0);
+export default function TripPlannerWizard({ onComplete, isLoading, initialStep = 0, initialData }: TripPlannerWizardProps) {
+  const [step, setStep] = useState(initialStep);
   const [direction, setDirection] = useState(1);
 
   const [data, setData] = useState<PlannerData>({
@@ -130,6 +132,7 @@ export default function TripPlannerWizard({ onComplete, isLoading }: TripPlanner
     transportTypes: ['bus'],
     transportPriority: 'cheapest',
     vibes: [],
+    ...initialData,
   });
 
   const update = (partial: Partial<PlannerData>) => setData(prev => ({ ...prev, ...partial }));

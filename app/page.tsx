@@ -13,6 +13,7 @@ export default function Home() {
   const [isUpselling, setIsUpselling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plannerData, setPlannerData] = useState<PlannerData | null>(null);
+  const [editStep, setEditStep] = useState<number>(0);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const handleComplete = async (data: PlannerData) => {
@@ -80,7 +81,14 @@ export default function Home() {
   const handleReset = () => {
     setResults(null);
     setPlannerData(null);
+    setEditStep(0);
     setError(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleNavigateToStep = (stepIndex: number) => {
+    setEditStep(stepIndex);
+    setResults(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -127,7 +135,7 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-6 py-16">
         {!results ? (
           <div className="max-w-2xl mx-auto">
-            <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} />
+            <TripPlannerWizard onComplete={handleComplete} isLoading={isLoading} initialStep={editStep} initialData={plannerData || undefined} />
 
             {error && (
               <motion.div
@@ -155,7 +163,7 @@ export default function Home() {
               </button>
             </div>
 
-            <TripPlannerResults results={results} onUpsell={handleUpsell} isUpselling={isUpselling} selectedVibes={plannerData?.vibes} />
+            <TripPlannerResults results={results} onUpsell={handleUpsell} isUpselling={isUpselling} selectedVibes={plannerData?.vibes} plannerData={plannerData} onNavigateToStep={handleNavigateToStep} />
           </div>
         )}
       </section>

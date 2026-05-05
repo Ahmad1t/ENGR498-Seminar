@@ -12,6 +12,8 @@ interface TripPlannerResultsProps {
   onUpsell: (extraBudget: number) => void;
   isUpselling: boolean;
   selectedVibes?: string[];
+  plannerData?: any;
+  onNavigateToStep?: (step: number) => void;
 }
 
 const VIBE_LABEL_MAP: Record<string, { label: string; emoji: string }> = {
@@ -27,7 +29,7 @@ const VIBE_LABEL_MAP: Record<string, { label: string; emoji: string }> = {
 
 const BUDGET_COLORS = ['#000000', '#404040', '#808080', '#b0b0b0'];
 
-export default function TripPlannerResults({ results, onUpsell, isUpselling, selectedVibes = [] }: TripPlannerResultsProps) {
+export default function TripPlannerResults({ results, onUpsell, isUpselling, selectedVibes = [], plannerData, onNavigateToStep }: TripPlannerResultsProps) {
   if (!results) return null;
 
   const {
@@ -155,12 +157,67 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
             </div>
           </div>
           {userTotalBudget > 0 && (bFlights + bHotels) > userTotalBudget && (
+            <>
             <div className="flex items-center gap-3 py-4 px-6 rounded-2xl bg-amber-500/10 border border-amber-500/20">
               <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
               <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
                 ⚠️ Your selected options exceed your budget. The cheapest flight + hotel alone costs ${(bFlights + bHotels).toLocaleString()}, which is over your ${userTotalBudget.toLocaleString()} budget.
               </p>
             </div>
+            {/* Smart Suggestion Cards */}
+            <div className="space-y-2 mt-3">
+              {/* Suggestion 1: Lower hotel stars */}
+              {bIncludeHotel && plannerData?.hotelStars > 1 && (() => {
+                const cheapestNightly = hotels.length > 0 ? Math.min(...hotels.map((h: any) => h.price)) : 0;
+                const savings = Math.round(cheapestNightly * 0.4);
+                return savings > 0 ? (
+                  <div className="flex items-center justify-between py-3 px-5 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                    <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+                      💡 Switching to {plannerData.hotelStars - 1}-star hotels could save approximately ${savings.toLocaleString()}/night.
+                    </p>
+                    {onNavigateToStep && (
+                      <button onClick={() => onNavigateToStep(4)}
+                        className="ml-4 shrink-0 px-4 py-1.5 rounded-full border border-amber-500/30 text-[10px] uppercase tracking-widest font-bold text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors">
+                        Adjust hotel preferences
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+              {/* Suggestion 2: Lower cabin class */}
+              {(() => {
+                const cabin = plannerData?.cabinClass;
+                const overrun = (bFlights + bHotels) - userTotalBudget;
+                const flightShareOfOverrun = bFlights > 0 ? bFlights / (bFlights + bHotels) : 0;
+                const isHighCabin = cabin === 'business' || cabin === 'first';
+                return isHighCabin && (flightShareOfOverrun * overrun) > (overrun * 0.15) ? (
+                  <div className="flex items-center justify-between py-3 px-5 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                    <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+                      💡 Switching to Economy could reduce your flight costs.
+                    </p>
+                    {onNavigateToStep && (
+                      <button onClick={() => onNavigateToStep(3)}
+                        className="ml-4 shrink-0 px-4 py-1.5 rounded-full border border-amber-500/30 text-[10px] uppercase tracking-widest font-bold text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors">
+                        Adjust flight preferences
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+              {/* Suggestion 3: Increase budget (always shown when over budget) */}
+              <div className="flex items-center justify-between py-3 px-5 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+                  💡 Your selected options exceed your budget. You can adjust your budget in Step 8.
+                </p>
+                {onNavigateToStep && (
+                  <button onClick={() => onNavigateToStep(7)}
+                    className="ml-4 shrink-0 px-4 py-1.5 rounded-full border border-amber-500/30 text-[10px] uppercase tracking-widest font-bold text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors">
+                    Adjust budget
+                  </button>
+                )}
+              </div>
+            </div>
+            </>
           )}
         </div>
       )}
