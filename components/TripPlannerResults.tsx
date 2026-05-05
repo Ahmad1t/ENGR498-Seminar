@@ -135,7 +135,7 @@ export default function TripPlannerResults({ results, onUpsell, isUpselling, sel
                       <span className="text-sm font-bold text-foreground">{d.name}</span>
                       {d.included && d.name === 'Hotels' && bHotels > 0 && (budgetBreakdown?.nights || 0) > 0 && (
                         <div className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">
-                          ${Math.round(bHotels / (budgetBreakdown?.nights || 1)).toLocaleString()}/night × {budgetBreakdown.nights} night{budgetBreakdown.nights !== 1 ? 's' : ''}
+                          ${hotels.length > 0 ? Math.min(...hotels.map((h: any) => h.price)).toLocaleString() : Math.round(bHotels / (budgetBreakdown?.nights || 1)).toLocaleString()}/night × {budgetBreakdown.nights} night{budgetBreakdown.nights !== 1 ? 's' : ''}
                         </div>
                       )}
                     </div>

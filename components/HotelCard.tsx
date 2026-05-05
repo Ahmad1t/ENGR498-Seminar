@@ -24,9 +24,9 @@ export default function HotelCard({ offer }: HotelCardProps) {
             className="object-cover group-hover:scale-110 transition-transform duration-700 opacity-80"
             referrerPolicy="no-referrer"
           />
-          <div className="absolute top-4 left-4 bg-background/40 backdrop-blur-md px-3 py-1 rounded-full border border-border flex items-center gap-1">
+          <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 flex items-center gap-1">
             <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
-            <span className="text-[10px] font-bold text-foreground">{offer.rating}</span>
+            <span className="text-[10px] font-bold text-white">{offer.rating}</span>
           </div>
         </div>
 

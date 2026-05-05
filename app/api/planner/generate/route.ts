@@ -380,6 +380,7 @@ export async function POST(request: Request) {
       // Map and validate each hotel — ensure it's actually in the destination city
       const hotelCandidates = nearbyHotels
         .filter((h: any) => h.display_name)
+        .filter((h: any) => /[a-zA-Z]/.test((h.display_name || '').split(',')[0]))
         .map((h: any, idx: number) => {
           const stars = estimateStars(h);
           const amenities = generateAmenities(stars);
