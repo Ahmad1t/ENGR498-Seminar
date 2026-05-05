@@ -535,9 +535,6 @@ export async function POST(request: Request) {
     let geminiHotelPricing: Record<string, number> | null = null;
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
-      const model = 'gemini-2.5-flash';
-
       // Build context from REAL LocationIQ data
       const hasVibes = vibes && Array.isArray(vibes) && vibes.length > 0;
       const vibeLabels = hasVibes ? vibes.map((v: string) => {
@@ -643,11 +640,12 @@ Please provide a JSON response with:
       console.log(prompt);
       console.log('══════════════════════════════════════════════════════════\n');
 
-      const response = await ai.models.generateContent({
+      const model = 'gemini-2.5-flash';
+      const geminiRequestConfig = {
         model,
         contents: [{ parts: [{ text: prompt }] }],
         config: {
-          responseMimeType: 'application/json',
+          responseMimeType: 'application/json' as const,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -696,7 +694,46 @@ Please provide a JSON response with:
             required: ['aiSummary', 'placesToVisit', 'upsellOptions'],
           },
         },
-      });
+      };
+
+      // ── Gemini API key rotation: primary → secondary on 429 only ──
+      const is429Error = (err: any): boolean => {
+        const msg = (err?.message || '').toLowerCase();
+        const status = err?.status || err?.statusCode || err?.httpStatusCode;
+        return status === 429 || msg.includes('429') || msg.includes('quota') || msg.includes('resource_exhausted') || msg.includes('rate limit');
+      };
+
+      let response: any;
+      let usedKeyLabel = 'primary';
+      const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+      const secondaryKey = process.env.GEMINI_API_KEY_2;
+
+      try {
+        const aiPrimary = new GoogleGenAI({ apiKey: primaryKey });
+        response = await aiPrimary.models.generateContent(geminiRequestConfig);
+        console.log('🔑 Gemini call succeeded with PRIMARY key');
+      } catch (primaryErr: any) {
+        if (is429Error(primaryErr) && secondaryKey) {
+          console.warn('⚠️ Gemini PRIMARY key hit 429 quota limit — rotating to SECONDARY key');
+          try {
+            const aiSecondary = new GoogleGenAI({ apiKey: secondaryKey });
+            response = await aiSecondary.models.generateContent(geminiRequestConfig);
+            usedKeyLabel = 'secondary';
+            console.log('🔑 Gemini call succeeded with SECONDARY key');
+          } catch (secondaryErr: any) {
+            if (is429Error(secondaryErr)) {
+              console.error('❌ Both Gemini keys exhausted (429) — falling back to hardcoded response');
+            } else {
+              console.error('❌ Gemini SECONDARY key failed with non-429 error:', secondaryErr.message);
+            }
+            throw secondaryErr; // let the outer catch handle fallback
+          }
+        } else {
+          // Non-429 error on primary key — do NOT try secondary, fall back immediately
+          console.error('❌ Gemini PRIMARY key failed with non-429 error:', primaryErr.message);
+          throw primaryErr;
+        }
+      }
 
       const aiResult = typeof response.text === 'string' ? JSON.parse(response.text || '{}') : {};
 
