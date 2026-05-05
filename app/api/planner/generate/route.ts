@@ -354,16 +354,20 @@ export async function POST(request: Request) {
 
       const estimateStars = (place: any): number => {
         const name = (place.display_name || '').toLowerCase();
-        if (name.includes('luxury') || name.includes('resort') || name.includes('palace') || name.includes('grand') || name.includes('ritz') || name.includes('hilton')) return 5;
-        if (name.includes('suites') || name.includes('boutique') || name.includes('premium') || name.includes('marriott') || name.includes('sheraton')) return 4;
-        if (name.includes('inn') || name.includes('motel') || name.includes('budget') || name.includes('hostel')) return 2;
+        // 5★ — ultra-luxury brands
+        if (name.includes('ritz') || name.includes('palace') || name.includes('four seasons') || name.includes('mandarin') || name.includes('bulgari') || name.includes('aman') || name.includes('peninsula') || name.includes('waldorf') || name.includes('rosewood') || name.includes('bvlgari')) return 5;
+        // 4★ — major upscale brands
+        if (name.includes('hilton') || name.includes('grand') || name.includes('marriott') || name.includes('sheraton') || name.includes('hyatt') || name.includes('westin') || name.includes('radisson') || name.includes('novotel') || name.includes('sofitel') || name.includes('crowne plaza') || name.includes('courtyard') || name.includes('pullman') || name.includes('intercontinental') || name.includes('renaissance') || name.includes('doubletree') || name.includes('wyndham') || name.includes('delta hotels') || name.includes('le meridien') || name.includes('autograph')) return 4;
+        // 3★ — midscale brands
+        if (name.includes('ibis') || name.includes('holiday inn') || name.includes('best western') || name.includes('ramada') || name.includes('quality inn') || name.includes('comfort inn') || name.includes('hampton')) return 3;
+        // 2★ — budget/economy
+        if (name.includes('inn') || name.includes('motel') || name.includes('budget') || name.includes('express') || name.includes('lodge') || name.includes('guesthouse') || name.includes('hostel')) return 2;
         return 3;
       };
 
-      const estimatePrice = (stars: number): number => {
-        const prices: Record<number, number> = { 1: 60, 2: 100, 3: 160, 4: 280, 5: 450 };
-        return prices[stars] || 180;
-      };
+      // Hardcoded fallback prices per star tier (used if Gemini doesn't return pricing)
+      const FALLBACK_PRICES: Record<number, number> = { 2: 100, 3: 160, 4: 280, 5: 450 };
+      const estimatePrice = (stars: number): number => FALLBACK_PRICES[stars] || 160;
 
       const generateAmenities = (stars: number): string[] => {
         const base = ['wifi'];
@@ -511,55 +515,15 @@ export async function POST(request: Request) {
     }
 
     // ────────────────────────────────────────────────────────
-    // STEP 7: Calculate budget breakdown
+    // STEP 7: Validate nights + compute effective budget
+    //         (Budget breakdown moved to AFTER Gemini so hotel
+    //          prices reflect destination-aware Gemini estimates)
     // ────────────────────────────────────────────────────────
     const effectiveBudget = budgetMode === 'total' ? totalBudget : (flightBudget + hotelBudget + transportBudget + dailyExpenseBudget);
     // Use the user-provided nights from the wizard (no hardcoded fallback)
     const tripNights = typeof nights === 'number' && nights > 0 ? nights : null;
     if (tripNights === null) {
       return NextResponse.json({ error: 'Missing or invalid nights value. Please select the number of nights in the Stay step.' }, { status: 400 });
-    }
-    // ── Fixed percentage ceilings (never redistributed) ──
-    // Flights: 45%, Hotels: 30%, Transport: 10%, Daily Expenses: 15%
-    const flightCeiling  = Math.round(effectiveBudget * 0.45);
-    const hotelCeiling   = Math.round(effectiveBudget * 0.30);
-    const transportFixed = Math.round(effectiveBudget * 0.10);
-    const dailyFixed     = Math.round(effectiveBudget * 0.15);
-
-    // Real API prices (available at this point in the handler)
-    const cheapestFlightPrice = flights.length > 0
-      ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || Infinity))
-      : 0;
-    const cheapestHotelTotal = hotels.length > 0
-      ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : Infinity))) * tripNights
-      : 0;
-
-    let budgetBreakdown;
-    if (budgetMode === 'total') {
-      budgetBreakdown = {
-        flights: includeFlight ? Math.round(Math.min(cheapestFlightPrice || flightCeiling, flightCeiling)) : 0,
-        hotels:  includeHotel  ? Math.round(Math.min(cheapestHotelTotal  || hotelCeiling,  hotelCeiling))  : 0,
-        transport: includeTransport ? transportFixed : 0,
-        dailyExpenses: dailyFixed,
-        nights: tripNights,
-        totalBudget: totalBudget,
-        includeFlight: !!includeFlight,
-        includeHotel: !!includeHotel,
-        includeTransport: !!includeTransport,
-      };
-    } else {
-      // Per-category mode: user set explicit amounts, just zero excluded ones
-      budgetBreakdown = {
-        flights: includeFlight ? flightBudget : 0,
-        hotels: includeHotel ? hotelBudget : 0,
-        transport: includeTransport ? transportBudget : 0,
-        dailyExpenses: dailyExpenseBudget,
-        nights: tripNights,
-        totalBudget: effectiveBudget,
-        includeFlight: !!includeFlight,
-        includeHotel: !!includeHotel,
-        includeTransport: !!includeTransport,
-      };
     }
 
     // ────────────────────────────────────────────────────────
@@ -568,6 +532,7 @@ export async function POST(request: Request) {
     let aiSummary = null;
     let placesToVisit: any[] = [];
     let upsellOptions: any[] = [];
+    let geminiHotelPricing: Record<string, number> | null = null;
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
@@ -657,7 +622,8 @@ ${hotelContext}${attractionContext}
 Please provide a JSON response with:
 1. "aiSummary" - An object with "title" (catchy trip title mentioning ${destinationCity}) and "description" (2-3 sentence persuasive trip summary about visiting ${destinationCity})
 2. "placesToVisit" - Array of 12 objects (extra buffer for filtering). Each MUST be a UNIQUE real place in ${destinationCity}, ${destinationCountry}.${hasVibes ? ` CRITICAL: Each place MUST match one of these vibes: ${vibes.join(', ')}. Do NOT return aviation museums, transport museums, aircraft exhibitions, or motorcycle museums. ONLY return places matching the selected vibes.` : ''} NO duplicates allowed. Each object has "name" (the full real name of the place, minimum 4 characters), "description" (1-2 sentences about this specific place), and "estimatedCost" (estimated daily cost in USD as a number)
-3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)`;
+3. "upsellOptions" - Array of 3 objects, each with "extraAmount" (number, like 100, 250, 500), "title" (what you get), and "description" (1 sentence explanation of the upgrade)
+4. "estimatedHotelPricePerNight" - An object mapping star rating to estimated average nightly hotel price in USD for ${destinationCity} specifically. Keys are "2", "3", "4", "5". Example for a cheap city: {"2": 40, "3": 80, "4": 150, "5": 280}. Example for an expensive city: {"2": 120, "3": 200, "4": 350, "5": 600}. Use your knowledge of real hotel pricing in ${destinationCity}.`;
 
       // ═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════
       console.log('\n═══════════ STEP 6: GEMINI PROMPT CONSTRUCTION ═══════════');
@@ -717,6 +683,15 @@ Please provide a JSON response with:
                   required: ['extraAmount', 'title', 'description'],
                 },
               },
+              estimatedHotelPricePerNight: {
+                type: Type.OBJECT,
+                properties: {
+                  '2': { type: Type.NUMBER },
+                  '3': { type: Type.NUMBER },
+                  '4': { type: Type.NUMBER },
+                  '5': { type: Type.NUMBER },
+                },
+              },
             },
             required: ['aiSummary', 'placesToVisit', 'upsellOptions'],
           },
@@ -737,6 +712,12 @@ Please provide a JSON response with:
 
       aiSummary = aiResult.aiSummary || null;
       upsellOptions = aiResult.upsellOptions || [];
+
+      // Stash Gemini's destination-aware hotel pricing for use after this try block
+      if (aiResult.estimatedHotelPricePerNight && typeof aiResult.estimatedHotelPricePerNight === 'object') {
+        geminiHotelPricing = aiResult.estimatedHotelPricePerNight;
+        console.log('🏨 Gemini estimatedHotelPricePerNight:', JSON.stringify(geminiHotelPricing));
+      }
 
       // ── STEP A: Validate place names (reject broken/empty names like "AS") ──
       const rawPlaces: any[] = (aiResult.placesToVisit || []).filter((p: any) => {
@@ -862,6 +843,65 @@ Please provide a JSON response with:
         { extraAmount: 250, title: 'Premium Cabin', description: 'Switch to a premium cabin class for a more comfortable flight.' },
         { extraAmount: 500, title: 'Full Luxury Package', description: 'Unlock first-class flights, 5-star hotels, and private transfers.' },
       ];
+    }
+
+    // ────────────────────────────────────────────────────────
+    // STEP 8b: Re-price hotels using Gemini's destination-aware estimates
+    // ────────────────────────────────────────────────────────
+    if (geminiHotelPricing) {
+      console.log('🏨 Re-pricing hotels with Gemini estimates:', JSON.stringify(geminiHotelPricing));
+      hotels.forEach((h: any) => {
+        const geminiPrice = geminiHotelPricing![String(h.rating)];
+        if (typeof geminiPrice === 'number' && geminiPrice > 0) {
+          h.price = geminiPrice;
+        }
+        // else: keep the hardcoded fallback price already assigned at Step 4
+      });
+    } else {
+      console.log('🏨 No Gemini hotel pricing — using hardcoded fallback prices');
+    }
+
+    // ────────────────────────────────────────────────────────
+    // STEP 8c: Calculate budget breakdown (after hotel re-pricing)
+    // ────────────────────────────────────────────────────────
+    // ── Fixed percentage ceilings (never redistributed) ──
+    const flightCeiling  = Math.round(effectiveBudget * 0.45);
+    const hotelCeiling   = Math.round(effectiveBudget * 0.30);
+    const transportFixed = Math.round(effectiveBudget * 0.10);
+    const dailyFixed     = Math.round(effectiveBudget * 0.15);
+
+    const cheapestFlightPrice = flights.length > 0
+      ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || Infinity))
+      : 0;
+    const cheapestHotelTotal = hotels.length > 0
+      ? Math.min(...hotels.map((h: any) => (typeof h.price === 'number' ? h.price : Infinity))) * tripNights
+      : 0;
+
+    let budgetBreakdown;
+    if (budgetMode === 'total') {
+      budgetBreakdown = {
+        flights: includeFlight ? Math.round(Math.min(cheapestFlightPrice || flightCeiling, flightCeiling)) : 0,
+        hotels:  includeHotel  ? Math.round(Math.min(cheapestHotelTotal  || hotelCeiling,  hotelCeiling))  : 0,
+        transport: includeTransport ? transportFixed : 0,
+        dailyExpenses: dailyFixed,
+        nights: tripNights,
+        totalBudget: totalBudget,
+        includeFlight: !!includeFlight,
+        includeHotel: !!includeHotel,
+        includeTransport: !!includeTransport,
+      };
+    } else {
+      budgetBreakdown = {
+        flights: includeFlight ? flightBudget : 0,
+        hotels: includeHotel ? hotelBudget : 0,
+        transport: includeTransport ? transportBudget : 0,
+        dailyExpenses: dailyExpenseBudget,
+        nights: tripNights,
+        totalBudget: effectiveBudget,
+        includeFlight: !!includeFlight,
+        includeHotel: !!includeHotel,
+        includeTransport: !!includeTransport,
+      };
     }
 
     // ═══════════ STEP 9: FINAL RESPONSE TO FRONTEND ═══════════
