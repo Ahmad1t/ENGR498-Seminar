@@ -8,6 +8,40 @@ const LOCATIONIQ_KEY = 'pk.35eee2d341d3d4fca912eeafc74ba5a4';
 // LocationIQ Helpers
 // ──────────────────────────────────────────────────────────────
 
+// Centralized throttle: ensures at least 500ms between any two LocationIQ requests
+// and automatically retries once on 429 (rate limit) after a 1s pause.
+let _lastLocationIqCall = 0;
+async function locationIqFetch(url: string, label: string): Promise<Response | null> {
+  // Enforce 500ms gap between calls
+  const now = Date.now();
+  const elapsed = now - _lastLocationIqCall;
+  if (elapsed < 500) {
+    await new Promise(r => setTimeout(r, 500 - elapsed));
+  }
+  _lastLocationIqCall = Date.now();
+
+  const res = await fetch(url);
+
+  // If rate-limited, wait 1s and retry once
+  if (res.status === 429) {
+    console.warn(`  ⏳ LocationIQ 429 on ${label} — waiting 1s and retrying...`);
+    await new Promise(r => setTimeout(r, 1000));
+    _lastLocationIqCall = Date.now();
+    const retry = await fetch(url);
+    if (!retry.ok) {
+      console.warn(`  ❌ LocationIQ retry still failed (${retry.status}) for ${label}`);
+      return null;
+    }
+    return retry;
+  }
+
+  if (!res.ok) {
+    console.warn(`  ⚠️ LocationIQ HTTP ${res.status} for ${label}`);
+    return null;
+  }
+  return res;
+}
+
 /**
  * Calculate the great-circle distance between two points on the Earth using the Haversine formula.
  * Returns distance in kilometers.
@@ -23,11 +57,11 @@ function haversineDistance(lat1Str: string, lon1Str: string, lat2Str: string, lo
   const R = 6371; // Earth radius in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
@@ -65,13 +99,9 @@ async function resolveIATAToCity(iataCode: string): Promise<{ cityName: string; 
 async function geocodeCity(cityName: string, countryName: string = ''): Promise<{ lat: string; lon: string; displayName: string } | null> {
   const searchQuery = countryName ? `${cityName}, ${countryName}` : cityName;
   try {
-    const res = await fetch(
-      `https://us1.locationiq.com/v1/search?key=${LOCATIONIQ_KEY}&q=${encodeURIComponent(searchQuery)}&format=json&limit=1&addressdetails=1`
-    );
-    if (!res.ok) {
-      console.warn(`LocationIQ geocoding HTTP ${res.status}`);
-      return null;
-    }
+    const url = `https://us1.locationiq.com/v1/search?key=${LOCATIONIQ_KEY}&q=${encodeURIComponent(searchQuery)}&format=json&limit=1&addressdetails=1`;
+    const res = await locationIqFetch(url, `geocode "${searchQuery}"`);
+    if (!res) return null;
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) {
       return { lat: data[0].lat, lon: data[0].lon, displayName: data[0].display_name };
@@ -108,12 +138,10 @@ async function geocodePlaceName(
     ? `${placeName}, ${cityName}, ${countryName}`
     : `${placeName}, ${cityName}`;
   try {
-    await new Promise(r => setTimeout(r, 300));
     const countryParam = countryCode ? `&countrycodes=${countryCode}` : '';
-    const res = await fetch(
-      `https://us1.locationiq.com/v1/search?key=${LOCATIONIQ_KEY}&q=${encodeURIComponent(liqQuery)}&format=json&limit=1${countryParam}`
-    );
-    if (res.ok) {
+    const url = `https://us1.locationiq.com/v1/search?key=${LOCATIONIQ_KEY}&q=${encodeURIComponent(liqQuery)}&format=json&limit=1${countryParam}`;
+    const res = await locationIqFetch(url, `place "${placeName}"`);
+    if (res) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
         const { lat, lon } = data[0];
@@ -164,13 +192,9 @@ async function geocodePlaceName(
  */
 async function findNearby(lat: string, lon: string, tag: string, radiusMeters: number = 20000, limit: number = 10): Promise<any[]> {
   try {
-    const res = await fetch(
-      `https://us1.locationiq.com/v1/nearby?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lon}&tag=${tag}&radius=${radiusMeters}&limit=${limit}&format=json`
-    );
-    if (!res.ok) {
-      console.warn(`LocationIQ nearby (${tag}) HTTP ${res.status}`);
-      return [];
-    }
+    const url = `https://us1.locationiq.com/v1/nearby?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lon}&tag=${tag}&radius=${radiusMeters}&limit=${limit}&format=json`;
+    const res = await locationIqFetch(url, `nearby ${tag}`);
+    if (!res) return [];
     const data = await res.json();
     if (Array.isArray(data)) {
       return data;
@@ -196,6 +220,92 @@ async function reverseGeocode(lat: string, lon: string): Promise<string> {
   } catch {
     return '';
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Xotelo Helpers — Real hotel pricing from Booking.com/Agoda/Expedia
+// ──────────────────────────────────────────────────────────────
+
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
+
+/**
+ * Search Xotelo for a hotel by name + city. Returns the best-matching hotel_key
+ * and metadata (image, address, TripAdvisor URL) or null if not found.
+ */
+async function xoteloSearchHotel(
+  hotelName: string,
+  cityName: string
+): Promise<{ hotel_key: string; name: string; image: string; url: string; street_address: string } | null> {
+  if (!RAPIDAPI_KEY) return null;
+  try {
+    const query = `${hotelName} ${cityName}`;
+    const res = await fetch(
+      `https://xotelo-hotel-prices.p.rapidapi.com/api/search?query=${encodeURIComponent(query)}&location_type=accommodation`,
+      {
+        headers: {
+          'x-rapidapi-key': RAPIDAPI_KEY,
+          'x-rapidapi-host': 'xotelo-hotel-prices.p.rapidapi.com',
+        },
+      }
+    );
+    if (!res.ok) {
+      console.warn(`  ⚠️ Xotelo search HTTP ${res.status} for "${query}"`);
+      return null;
+    }
+    const data = await res.json();
+    const results = data?.result?.data || data?.result || [];
+    if (Array.isArray(results) && results.length > 0) {
+      // Pick the first (best) match
+      const best = results[0];
+      return {
+        hotel_key: best.hotel_key,
+        name: best.name || hotelName,
+        image: best.image || '',
+        url: best.url || '',
+        street_address: best.street_address || '',
+      };
+    }
+  } catch (err: any) {
+    console.warn(`  ⚠️ Xotelo search error for "${hotelName}":`, err.message);
+  }
+  return null;
+}
+
+/**
+ * Fetch real-time hotel rates from Xotelo (free endpoint, no key needed).
+ * Returns the cheapest per-night rate in USD, or null if unavailable.
+ */
+async function xoteloGetRates(
+  hotelKey: string,
+  checkIn: string,
+  checkOut: string,
+  nights: number
+): Promise<{ perNight: number; totalRate: number; provider: string } | null> {
+  try {
+    const res = await fetch(
+      `https://data.xotelo.com/api/rates?hotel_key=${encodeURIComponent(hotelKey)}&chk_in=${checkIn}&chk_out=${checkOut}&currency=USD`
+    );
+    if (!res.ok) {
+      console.warn(`  ⚠️ Xotelo rates HTTP ${res.status} for ${hotelKey}`);
+      return null;
+    }
+    const data = await res.json();
+    const rates = data?.result?.rates;
+    if (Array.isArray(rates) && rates.length > 0) {
+      // Find the cheapest total rate
+      const cheapest = rates.reduce((min: any, r: any) => (r.rate < min.rate ? r : min), rates[0]);
+      const totalWithTax = (cheapest.rate || 0) + (cheapest.tax || 0);
+      const perNight = nights > 0 ? Math.round(totalWithTax / nights) : totalWithTax;
+      return {
+        perNight,
+        totalRate: totalWithTax,
+        provider: cheapest.name || cheapest.code || 'Unknown',
+      };
+    }
+  } catch (err: any) {
+    console.warn(`  ⚠️ Xotelo rates error for ${hotelKey}:`, err.message);
+  }
+  return null;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -268,64 +378,64 @@ export async function POST(request: Request) {
     // ────────────────────────────────────────────────────────
     let flights: any[] = [];
     if (includeFlight) {
-    const slices: any[] = [{ origin, destination, departure_date: departureDate }];
-    if (tripType === 'round_trip' && returnDate) {
-      slices.push({ origin: destination, destination: origin, departure_date: returnDate });
-    }
-
-    const passengers = [
-      ...Array(adults).fill(null).map(() => ({ type: 'adult' as const })),
-      ...Array(children).fill(null).map(() => ({ type: 'child' as const })),
-    ];
-
-    try {
-      const offerRequest = await duffel.offerRequests.create({
-        slices: slices as any,
-        passengers,
-        ...(cabinClass && cabinClass !== 'economy' && { cabin_class: cabinClass }),
-      });
-
-      const offers = await duffel.offers.list({
-        offer_request_id: offerRequest.data.id,
-        sort: 'total_amount',
-      });
-
-      flights = (offers.data || []).slice(0, 10).map((offer: any) => {
-        const detailedSlices = offer.slices.map((slice: any) => ({
-          ...slice,
-          segments: slice.segments.map((seg: any) => ({
-            ...seg,
-            origin_name: seg.origin?.name || seg.origin?.city_name || seg.origin?.iata_code,
-            destination_name: seg.destination?.name || seg.destination?.city_name || seg.destination?.iata_code,
-            origin_terminal: seg.origin_terminal || '-',
-            destination_terminal: seg.destination_terminal || '-',
-            aircraft_name: seg.aircraft?.name || 'Aircraft',
-            marketing_carrier_name: seg.marketing_carrier?.name || 'Airline',
-            marketing_carrier_flight_number: seg.marketing_carrier_flight_number || '',
-            cabin_class: seg.passengers?.[0]?.cabin_class_marketing_name || seg.cabin_class || cabinClass || 'economy',
-          })),
-        }));
-
-        const totalIncludedBaggage = offer.passengers.reduce((acc: number, p: any) => {
-          return acc + (p.allowed_baggage?.filter((b: any) => b.type === 'checked').length || 0);
-        }, 0);
-
-        return {
-          ...offer,
-          slices: detailedSlices,
-          display_price: parseFloat(offer.total_amount),
-          baggage_metadata: { carry_on: 1, checked: totalIncludedBaggage },
-          estimated_baggage_fee: 0,
-          total_included_baggage: totalIncludedBaggage,
-        };
-      });
-
-      if (directOnly) {
-        flights = flights.filter(f => f.slices.every((s: any) => s.segments.length === 1));
+      const slices: any[] = [{ origin, destination, departure_date: departureDate }];
+      if (tripType === 'round_trip' && returnDate) {
+        slices.push({ origin: destination, destination: origin, departure_date: returnDate });
       }
-    } catch (flightErr: any) {
-      console.error('Flight search error:', flightErr.message);
-    }
+
+      const passengers = [
+        ...Array(adults).fill(null).map(() => ({ type: 'adult' as const })),
+        ...Array(children).fill(null).map(() => ({ type: 'child' as const })),
+      ];
+
+      try {
+        const offerRequest = await duffel.offerRequests.create({
+          slices: slices as any,
+          passengers,
+          ...(cabinClass && cabinClass !== 'economy' && { cabin_class: cabinClass }),
+        });
+
+        const offers = await duffel.offers.list({
+          offer_request_id: offerRequest.data.id,
+          sort: 'total_amount',
+        });
+
+        flights = (offers.data || []).slice(0, 10).map((offer: any) => {
+          const detailedSlices = offer.slices.map((slice: any) => ({
+            ...slice,
+            segments: slice.segments.map((seg: any) => ({
+              ...seg,
+              origin_name: seg.origin?.name || seg.origin?.city_name || seg.origin?.iata_code,
+              destination_name: seg.destination?.name || seg.destination?.city_name || seg.destination?.iata_code,
+              origin_terminal: seg.origin_terminal || '-',
+              destination_terminal: seg.destination_terminal || '-',
+              aircraft_name: seg.aircraft?.name || 'Aircraft',
+              marketing_carrier_name: seg.marketing_carrier?.name || 'Airline',
+              marketing_carrier_flight_number: seg.marketing_carrier_flight_number || '',
+              cabin_class: seg.passengers?.[0]?.cabin_class_marketing_name || seg.cabin_class || cabinClass || 'economy',
+            })),
+          }));
+
+          const totalIncludedBaggage = offer.passengers.reduce((acc: number, p: any) => {
+            return acc + (p.allowed_baggage?.filter((b: any) => b.type === 'checked').length || 0);
+          }, 0);
+
+          return {
+            ...offer,
+            slices: detailedSlices,
+            display_price: parseFloat(offer.total_amount),
+            baggage_metadata: { carry_on: 1, checked: totalIncludedBaggage },
+            estimated_baggage_fee: 0,
+            total_included_baggage: totalIncludedBaggage,
+          };
+        });
+
+        if (directOnly) {
+          flights = flights.filter(f => f.slices.every((s: any) => s.segments.length === 1));
+        }
+      } catch (flightErr: any) {
+        console.error('Flight search error:', flightErr.message);
+      }
     } else {
       console.log('✈️ Flights SKIPPED — user toggled off includeFlight');
     }
@@ -348,88 +458,142 @@ export async function POST(request: Request) {
     // ────────────────────────────────────────────────────────
     let hotels: any[] = [];
     if (includeHotel) {
-    if (geoLat && geoLon) {
-      // Search within 20km of city center for hotels
-      const nearbyHotels = await findNearby(geoLat, geoLon, 'hotel', 20000, 20);
+      if (geoLat && geoLon) {
+        // Search within 20km of city center for hotels
+        const nearbyHotels = await findNearby(geoLat, geoLon, 'hotel', 20000, 20);
 
-      const estimateStars = (place: any): number => {
-        const name = (place.display_name || '').toLowerCase();
-        // 5★ — ultra-luxury brands
-        if (name.includes('ritz') || name.includes('palace') || name.includes('four seasons') || name.includes('mandarin') || name.includes('bulgari') || name.includes('aman') || name.includes('peninsula') || name.includes('waldorf') || name.includes('rosewood') || name.includes('bvlgari')) return 5;
-        // 4★ — major upscale brands
-        if (name.includes('hilton') || name.includes('grand') || name.includes('marriott') || name.includes('sheraton') || name.includes('hyatt') || name.includes('westin') || name.includes('radisson') || name.includes('novotel') || name.includes('sofitel') || name.includes('crowne plaza') || name.includes('courtyard') || name.includes('pullman') || name.includes('intercontinental') || name.includes('renaissance') || name.includes('doubletree') || name.includes('wyndham') || name.includes('delta hotels') || name.includes('le meridien') || name.includes('autograph')) return 4;
-        // 3★ — midscale brands
-        if (name.includes('ibis') || name.includes('holiday inn') || name.includes('best western') || name.includes('ramada') || name.includes('quality inn') || name.includes('comfort inn') || name.includes('hampton')) return 3;
-        // 2★ — budget/economy
-        if (name.includes('inn') || name.includes('motel') || name.includes('budget') || name.includes('express') || name.includes('lodge') || name.includes('guesthouse') || name.includes('hostel')) return 2;
-        return 3;
-      };
+        const estimateStars = (place: any): number => {
+          const name = (place.display_name || '').toLowerCase();
+          // 5★ — ultra-luxury brands
+          if (name.includes('ritz') || name.includes('palace') || name.includes('four seasons') || name.includes('mandarin') || name.includes('bulgari') || name.includes('aman') || name.includes('peninsula') || name.includes('waldorf') || name.includes('rosewood') || name.includes('bvlgari')) return 5;
+          // 4★ — major upscale brands
+          if (name.includes('hilton') || name.includes('grand') || name.includes('marriott') || name.includes('sheraton') || name.includes('hyatt') || name.includes('westin') || name.includes('radisson') || name.includes('novotel') || name.includes('sofitel') || name.includes('crowne plaza') || name.includes('courtyard') || name.includes('pullman') || name.includes('intercontinental') || name.includes('renaissance') || name.includes('doubletree') || name.includes('wyndham') || name.includes('delta hotels') || name.includes('le meridien') || name.includes('autograph')) return 4;
+          // 3★ — midscale brands
+          if (name.includes('ibis') || name.includes('holiday inn') || name.includes('best western') || name.includes('ramada') || name.includes('quality inn') || name.includes('comfort inn') || name.includes('hampton')) return 3;
+          // 2★ — budget/economy
+          if (name.includes('inn') || name.includes('motel') || name.includes('budget') || name.includes('express') || name.includes('lodge') || name.includes('guesthouse') || name.includes('hostel')) return 2;
+          return 3;
+        };
 
-      // Hardcoded fallback prices per star tier (used if Gemini doesn't return pricing)
-      const FALLBACK_PRICES: Record<number, number> = { 2: 100, 3: 160, 4: 280, 5: 450 };
-      const estimatePrice = (stars: number): number => FALLBACK_PRICES[stars] || 160;
+        // Hardcoded fallback prices per star tier (used if Gemini doesn't return pricing)
+        const FALLBACK_PRICES: Record<number, number> = { 2: 100, 3: 160, 4: 280, 5: 450 };
+        const estimatePrice = (stars: number): number => FALLBACK_PRICES[stars] || 160;
 
-      const generateAmenities = (stars: number): string[] => {
-        const base = ['wifi'];
-        if (stars >= 3) base.push('breakfast', 'coffee');
-        if (stars >= 4) base.push('gym', 'pool', 'shuttle');
-        if (stars >= 5) base.push('spa', 'toiletries');
-        return base;
-      };
+        const generateAmenities = (stars: number): string[] => {
+          const base = ['wifi'];
+          if (stars >= 3) base.push('breakfast', 'coffee');
+          if (stars >= 4) base.push('gym', 'pool', 'shuttle');
+          if (stars >= 5) base.push('spa', 'toiletries');
+          return base;
+        };
 
-      // Map and validate each hotel — ensure it's actually in the destination city
-      const hotelCandidates = nearbyHotels
-        .filter((h: any) => h.display_name)
-        .filter((h: any) => /[a-zA-Z]/.test((h.display_name || '').split(',')[0]))
-        .map((h: any, idx: number) => {
-          const stars = estimateStars(h);
-          const amenities = generateAmenities(stars);
-          const distanceKm = h.distance ? (parseFloat(h.distance) / 1000).toFixed(1) : '';
-          const fullName = h.display_name || `Hotel ${idx + 1}`;
-          const cleanName = fullName.split(',')[0].trim();
-          const locationParts = fullName.split(',').slice(1, 3).join(',').trim();
+        // Map and validate each hotel — ensure it's actually in the destination city
+        const hotelCandidates = nearbyHotels
+          .filter((h: any) => h.display_name)
+          .filter((h: any) => /[a-zA-Z]/.test((h.display_name || '').split(',')[0]))
+          .map((h: any, idx: number) => {
+            const stars = estimateStars(h);
+            const amenities = generateAmenities(stars);
+            const distanceKm = h.distance ? (parseFloat(h.distance) / 1000).toFixed(1) : '';
+            const fullName = h.display_name || `Hotel ${idx + 1}`;
+            const cleanName = fullName.split(',')[0].trim();
+            const locationParts = fullName.split(',').slice(1, 3).join(',').trim();
 
-          return {
-            id: `liq-h-${idx}`,
-            type: 'hotel',
-            name: cleanName,
-            price: estimatePrice(stars),
-            rating: stars,
-            description: `Located ${distanceKm ? distanceKm + ' km from ' + destinationCity + ' center' : 'in ' + destinationCity}. ${cleanName} offers quality accommodation in ${destinationCity}.`,
-            location: locationParts || `${destinationCity} City Area`,
-            amenities,
-            lat: h.lat,
-            lon: h.lon,
-            distanceKm: distanceKm ? parseFloat(distanceKm) : 0,
-            source: 'locationiq',
-            verified: true,
-          };
-        });
+            return {
+              id: `liq-h-${idx}`,
+              type: 'hotel',
+              name: cleanName,
+              price: estimatePrice(stars),
+              rating: stars,
+              description: `Located ${distanceKm ? distanceKm + ' km from ' + destinationCity + ' center' : 'in ' + destinationCity}. ${cleanName} offers quality accommodation in ${destinationCity}.`,
+              location: locationParts || `${destinationCity} City Area`,
+              amenities,
+              lat: h.lat,
+              lon: h.lon,
+              distanceKm: distanceKm ? parseFloat(distanceKm) : 0,
+              source: 'locationiq',
+              verified: true,
+            };
+          });
 
-      // Filter by star preference and sort by distance (closest first)
-      hotels = hotelCandidates
-        .filter(h => h.rating >= hotelStars)
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 6);
+        // Filter by star preference and sort by distance (closest first)
+        hotels = hotelCandidates
+          .filter(h => h.rating >= hotelStars)
+          .sort((a, b) => a.distanceKm - b.distanceKm)
+          .slice(0, 6);
 
-      // Sort by amenity match if user specified amenities
-      if (hotelAmenities && hotelAmenities.length > 0) {
-        hotels.sort((a: any, b: any) => {
-          const aMatch = hotelAmenities.filter((am: string) => a.amenities.includes(am)).length;
-          const bMatch = hotelAmenities.filter((am: string) => b.amenities.includes(am)).length;
-          return bMatch - aMatch;
-        });
+        // Sort by amenity match if user specified amenities
+        if (hotelAmenities && hotelAmenities.length > 0) {
+          hotels.sort((a: any, b: any) => {
+            const aMatch = hotelAmenities.filter((am: string) => a.amenities.includes(am)).length;
+            const bMatch = hotelAmenities.filter((am: string) => b.amenities.includes(am)).length;
+            return bMatch - aMatch;
+          });
+        }
+
+        // ── STEP 4b: Fetch REAL prices from Xotelo (Booking.com/Agoda/Expedia) ──
+        // For each hotel found by LocationIQ, search Xotelo to find its TripAdvisor
+        // hotel_key, then fetch real-time rates from OTAs.
+        if (RAPIDAPI_KEY && departureDate && nights > 0) {
+          // Compute check-out date from departure + nights
+          const chkIn = departureDate;
+          const chkOutDate = new Date(departureDate);
+          chkOutDate.setDate(chkOutDate.getDate() + nights);
+          const chkOut = chkOutDate.toISOString().split('T')[0];
+
+          console.log(`\n🏷️ XOTELO PRICING — searching ${hotels.length} hotels (${chkIn} → ${chkOut}, ${nights} nights)`);
+
+          // Process hotels sequentially to avoid rate limiting
+          for (const hotel of hotels) {
+            try {
+              // Step 1: Search Xotelo to find this hotel's TripAdvisor key
+              const xoteloMatch = await xoteloSearchHotel(hotel.name, destinationCity);
+              if (!xoteloMatch) {
+                console.log(`  ❌ Xotelo: no match for "${hotel.name}" — keeping fallback price $${hotel.price}/night`);
+                hotel.priceSource = 'estimate';
+                continue;
+              }
+              console.log(`  🔍 Xotelo: "${hotel.name}" → matched "${xoteloMatch.name}" (key: ${xoteloMatch.hotel_key})`);
+
+              // Enrich hotel with Xotelo metadata (image, TripAdvisor URL)
+              if (xoteloMatch.image) hotel.image = xoteloMatch.image;
+              if (xoteloMatch.url) hotel.tripAdvisorUrl = xoteloMatch.url;
+              if (xoteloMatch.street_address) hotel.location = xoteloMatch.street_address;
+
+              // Step 2: Fetch real-time rates for this hotel
+              const rates = await xoteloGetRates(xoteloMatch.hotel_key, chkIn, chkOut, nights);
+              if (rates) {
+                console.log(`  💰 Xotelo: "${hotel.name}" → $${rates.perNight}/night (${rates.provider}) | Total: $${rates.totalRate} for ${nights} nights`);
+                hotel.price = rates.perNight;
+                hotel.totalPrice = rates.totalRate;
+                hotel.priceSource = 'xotelo';
+                hotel.priceProvider = rates.provider;
+              } else {
+                console.log(`  ⚠️ Xotelo: no rates available for "${hotel.name}" — keeping fallback price $${hotel.price}/night`);
+                hotel.priceSource = 'estimate';
+              }
+
+              // Small delay between requests to be respectful to the API
+              await new Promise(r => setTimeout(r, 300));
+            } catch (err: any) {
+              console.warn(`  ⚠️ Xotelo pricing failed for "${hotel.name}":`, err.message);
+              hotel.priceSource = 'estimate';
+            }
+          }
+
+          const xoteloCount = hotels.filter((h: any) => h.priceSource === 'xotelo').length;
+          console.log(`🏷️ XOTELO RESULT: ${xoteloCount}/${hotels.length} hotels got real prices\n`);
+        }
       }
-    }
 
-    // Fallback hotels — clearly labeled as being in the destination city
-    if (hotels.length === 0) {
-      hotels = [
-        { id: 'h1', type: 'hotel', name: `Grand ${destinationCity} Resort`, price: 450, rating: 5, description: `Premium luxury hotel in the heart of ${destinationCity}. Includes complimentary breakfast, high-speed WiFi, pool, and luxury toiletries.`, location: `${destinationCity} City Center`, amenities: ['breakfast', 'wifi', 'pool', 'toiletries', 'spa', 'gym'], verified: false },
-        { id: 'h2', type: 'hotel', name: `${destinationCity} Metropolitan Suites`, price: 280, rating: 4, description: `Modern downtown hotel in ${destinationCity} with panoramic views. Features high-speed WiFi, in-room coffee, and fitness center.`, location: `Downtown ${destinationCity}`, amenities: ['wifi', 'coffee', 'gym', 'breakfast'], verified: false },
-        { id: 'h3', type: 'hotel', name: `${destinationCity} Boutique Hotel`, price: 190, rating: 3, description: `Charming boutique hotel in ${destinationCity}: free WiFi, in-room coffee, and complimentary breakfast.`, location: `${destinationCity} Historic District`, amenities: ['wifi', 'coffee', 'breakfast'], verified: false },
-      ].filter(h => h.rating >= hotelStars);
-    }
+      // Fallback hotels — clearly labeled as being in the destination city
+      if (hotels.length === 0) {
+        hotels = [
+          { id: 'h1', type: 'hotel', name: `Grand ${destinationCity} Resort`, price: 450, rating: 5, description: `Premium luxury hotel in the heart of ${destinationCity}. Includes complimentary breakfast, high-speed WiFi, pool, and luxury toiletries.`, location: `${destinationCity} City Center`, amenities: ['breakfast', 'wifi', 'pool', 'toiletries', 'spa', 'gym'], verified: false },
+          { id: 'h2', type: 'hotel', name: `${destinationCity} Metropolitan Suites`, price: 280, rating: 4, description: `Modern downtown hotel in ${destinationCity} with panoramic views. Features high-speed WiFi, in-room coffee, and fitness center.`, location: `Downtown ${destinationCity}`, amenities: ['wifi', 'coffee', 'gym', 'breakfast'], verified: false },
+          { id: 'h3', type: 'hotel', name: `${destinationCity} Boutique Hotel`, price: 190, rating: 3, description: `Charming boutique hotel in ${destinationCity}: free WiFi, in-room coffee, and complimentary breakfast.`, location: `${destinationCity} Historic District`, amenities: ['wifi', 'coffee', 'breakfast'], verified: false },
+        ].filter(h => h.rating >= hotelStars);
+      }
     } else {
       console.log('🏨 Hotels SKIPPED — user toggled off includeHotel');
     }
@@ -437,7 +601,7 @@ export async function POST(request: Request) {
     // ═══════════ STEP 4: HOTEL SEARCH ═══════════
     console.log('═══════════ STEP 4: HOTEL SEARCH ═══════════');
     console.log('🏨 Hotels found:', hotels.length, '| Source:', hotels.length > 0 && hotels[0].source === 'locationiq' ? 'LocationIQ GPS' : 'Fallback mock data');
-    hotels.forEach((h: any, i: number) => console.log(`   ${i+1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night | ${h.location}`));
+    hotels.forEach((h: any, i: number) => console.log(`   ${i + 1}. "${h.name}" | ${h.rating}⭐ | $${h.price}/night | ${h.priceSource === 'xotelo' ? '✅ REAL (' + h.priceProvider + ')' : '📊 Estimate'} | ${h.location}`));
     console.log('════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
@@ -493,7 +657,7 @@ export async function POST(request: Request) {
     console.log('═══════════ STEP 5: LOCATIONIQ POI FETCH ═══════════');
     console.log('🔍 LocationIQ search coords:', geoLat, geoLon);
     console.log('📍 POIs after filtering & dedup:', nearbyAttractions.length);
-    nearbyAttractions.forEach((a: any, i: number) => console.log(`   ${i+1}. "${a.name}" (type: ${a.type}) — ${a.distance}`));
+    nearbyAttractions.forEach((a: any, i: number) => console.log(`   ${i + 1}. "${a.name}" (type: ${a.type}) — ${a.distance}`));
     console.log('═══════════════════════════════════════════════════\n');
 
     // ────────────────────────────────────────────────────────
@@ -822,7 +986,7 @@ Please provide a JSON response with:
       console.log('🤖 placesToVisit count:', (aiResult.placesToVisit || []).length);
       console.log('🤖 upsellOptions count:', (aiResult.upsellOptions || []).length);
       console.log('🤖 Raw placesToVisit:');
-      (aiResult.placesToVisit || []).forEach((p: any, i: number) => console.log(`   ${i+1}. "${p.name}" | $${p.estimatedCost} | ${(p.description || '').substring(0, 80)}...`));
+      (aiResult.placesToVisit || []).forEach((p: any, i: number) => console.log(`   ${i + 1}. "${p.name}" | $${p.estimatedCost} | ${(p.description || '').substring(0, 80)}...`));
       console.log('════════════════════════════════════════════════════\n');
 
       aiSummary = aiResult.aiSummary || null;
@@ -932,7 +1096,7 @@ Please provide a JSON response with:
       // ═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════
       console.log('\n═══════════ STEP 8: PLACES GEOCODING + FILTERING ═══════════');
       console.log('✅ Final places after all filtering:', placesToVisit.length);
-      placesToVisit.forEach((p: any, i: number) => console.log(`   ${i+1}. "${p.name}" — ${p.distance || 'no distance'} | lat=${p.lat || 'N/A'} lon=${p.lon || 'N/A'}`));
+      placesToVisit.forEach((p: any, i: number) => console.log(`   ${i + 1}. "${p.name}" — ${p.distance || 'no distance'} | lat=${p.lat || 'N/A'} lon=${p.lon || 'N/A'}`));
       console.log('════════════════════════════════════════════════════════════\n');
     } catch (aiErr: any) {
       console.warn('\n❌ AI analysis failed — using FALLBACK code path:', aiErr.message);
@@ -980,10 +1144,10 @@ Please provide a JSON response with:
     // STEP 8c: Calculate budget breakdown (after hotel re-pricing)
     // ────────────────────────────────────────────────────────
     // ── Fixed percentage ceilings (never redistributed) ──
-    const flightCeiling  = Math.round(effectiveBudget * 0.45);
-    const hotelCeiling   = Math.round(effectiveBudget * 0.30);
+    const flightCeiling = Math.round(effectiveBudget * 0.45);
+    const hotelCeiling = Math.round(effectiveBudget * 0.30);
     const transportFixed = Math.round(effectiveBudget * 0.10);
-    const dailyFixed     = Math.round(effectiveBudget * 0.15);
+    const dailyFixed = Math.round(effectiveBudget * 0.15);
 
     const cheapestFlightPrice = flights.length > 0
       ? Math.min(...flights.map((f: any) => parseFloat(f.total_amount) || Infinity))
@@ -996,7 +1160,7 @@ Please provide a JSON response with:
     if (budgetMode === 'total') {
       budgetBreakdown = {
         flights: includeFlight ? Math.round(Math.min(cheapestFlightPrice || flightCeiling, flightCeiling)) : 0,
-        hotels:  includeHotel  ? Math.round(Math.min(cheapestHotelTotal  || hotelCeiling,  hotelCeiling))  : 0,
+        hotels: includeHotel ? Math.round(Math.min(cheapestHotelTotal || hotelCeiling, hotelCeiling)) : 0,
         transport: includeTransport ? transportFixed : 0,
         dailyExpenses: dailyFixed,
         nights: tripNights,
