@@ -1,14 +1,12 @@
 import type {Metadata} from 'next';
-import { Inter, Playfair_Display } from 'next/font/google';
+import { Inter, Playfair_Display, Geist } from 'next/font/google';
 import './globals.css';
 import ThemeToggle from '@/components/ThemeToggle';
 import Navbar from '@/components/Navbar';
 import { AuthProvider } from '@/hooks/useAuth';
+import { cn } from "@/lib/utils";
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-sans',
-});
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 const playfair = Playfair_Display({
   subsets: ['latin'],
@@ -22,7 +20,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${inter.variable} ${playfair.variable}`}>
+    <html lang="en" suppressHydrationWarning className={cn(playfair.variable, "font-sans", geist.variable)}>
       <body suppressHydrationWarning className="bg-background text-foreground antialiased transition-colors duration-300">
         <AuthProvider>
           <Navbar />
