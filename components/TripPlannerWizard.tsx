@@ -3,12 +3,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  MapPin, Calendar, Users, Plane, DollarSign, Hotel, Bus, Star,
+  MapPin, Calendar as CalendarIcon, Users, Plane, DollarSign, Hotel, Bus, Star,
   ChevronRight, ChevronLeft, Check, Minus, Plus, Sparkles, Briefcase,
   Wifi, Coffee, UtensilsCrossed, Dumbbell, CarFront, Train, ArrowRight, BedDouble,
   Compass, AlertTriangle, Lightbulb
 } from 'lucide-react';
 import AirportAutocomplete from './AirportAutocomplete';
+import { Calendar } from '@/components/ui/calendar';
+import type { DateRange } from 'react-day-picker';
 
 type TripType = 'one_way' | 'round_trip' | 'multi_city';
 type CabinClass = 'economy' | 'premium_economy' | 'business' | 'first';
@@ -381,29 +383,110 @@ export default function TripPlannerWizard({ onComplete, isLoading, initialStep =
         );
 
       // Step 2 — Dates
-      case 1:
-        return (
-          <div className="space-y-8">
-            <div className="space-y-3">
-              <label className="small-caps ml-1">Departure Date</label>
-              <div className="relative group">
-                <Calendar className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-foreground transition-colors" />
-                <input type="date" value={data.departureDate} onChange={e => update({ departureDate: e.target.value })}
-                  className="w-full bg-muted border border-border rounded-2xl py-5 pl-14 pr-5 focus:outline-none focus:border-foreground/20 transition-all text-foreground text-lg" />
-              </div>
-            </div>
-            {data.tripType === 'round_trip' && (
-              <div className="space-y-3">
-                <label className="small-caps ml-1">Return Date</label>
-                <div className="relative group">
-                  <Calendar className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-foreground transition-colors" />
-                  <input type="date" value={data.returnDate} onChange={e => update({ returnDate: e.target.value })}
-                    className="w-full bg-muted border border-border rounded-2xl py-5 pl-14 pr-5 focus:outline-none focus:border-foreground/20 transition-all text-foreground text-lg" />
+      case 1: {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Helper: convert "YYYY-MM-DD" string to Date, or undefined
+        const parseDate = (s: string) => {
+          if (!s) return undefined;
+          const [y, m, d] = s.split('-').map(Number);
+          return new Date(y, m - 1, d);
+        };
+        // Helper: convert Date to "YYYY-MM-DD" string
+        const toStr = (d: Date | undefined) =>
+          d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+
+        if (data.tripType === 'round_trip') {
+          // ── Round Trip: range calendar (2 months side by side) ──
+          const rangeValue: DateRange = {
+            from: parseDate(data.departureDate),
+            to: parseDate(data.returnDate),
+          };
+
+          return (
+            <div className="space-y-6">
+              {/* Date labels */}
+              <div className="flex gap-6">
+                <div className="flex-1 bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
+                  <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                  <div>
+                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
+                    <p className="text-sm font-medium">
+                      {rangeValue.from
+                        ? rangeValue.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : <span className="text-muted-foreground">Pick a date</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex-1 bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
+                  <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                  <div>
+                    <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Return</p>
+                    <p className="text-sm font-medium">
+                      {rangeValue.to
+                        ? rangeValue.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : <span className="text-muted-foreground">Pick a date</span>}
+                    </p>
+                  </div>
                 </div>
               </div>
-            )}
+
+              {/* Range calendar */}
+              <div className="flex justify-center">
+                <Calendar
+                  mode="range"
+                  selected={rangeValue}
+                  onSelect={(range: DateRange | undefined) => {
+                    update({
+                      departureDate: toStr(range?.from),
+                      returnDate: toStr(range?.to),
+                    });
+                  }}
+                  numberOfMonths={2}
+                  disabled={{ before: today }}
+                  defaultMonth={parseDate(data.departureDate) || today}
+                  className="rounded-2xl border border-border bg-card p-4"
+                />
+              </div>
+            </div>
+          );
+        }
+
+        // ── One Way: single-date calendar ──
+        const selectedDate = parseDate(data.departureDate);
+
+        return (
+          <div className="space-y-6">
+            {/* Date label */}
+            <div className="bg-muted border border-border rounded-2xl py-4 px-5 flex items-center gap-3">
+              <CalendarIcon className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+              <div>
+                <p className="text-[0.65rem] small-caps tracking-widest text-muted-foreground">Departure</p>
+                <p className="text-sm font-medium">
+                  {selectedDate
+                    ? selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : <span className="text-muted-foreground">Pick a date</span>}
+                </p>
+              </div>
+            </div>
+
+            {/* Single calendar */}
+            <div className="flex justify-center">
+              <Calendar
+                mode="single"
+                selected={selectedDate}
+                onSelect={(date: Date | undefined) => {
+                  update({ departureDate: toStr(date) });
+                }}
+                disabled={{ before: today }}
+                defaultMonth={selectedDate || today}
+                className="rounded-2xl border border-border bg-card p-4"
+              />
+            </div>
           </div>
         );
+      }
 
       // Step 3 — Travelers
       case 2:
